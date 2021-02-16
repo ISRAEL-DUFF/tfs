@@ -5,6 +5,7 @@ use std::io::SeekFrom;
 use std::path::Path;
 // use std::fs::OpenOptions;
 
+#[allow(dead_code)]
 pub struct Disk {
     FileDescriptor: Option<File>,
     Blocks: usize,  // Number of blocks in disk image

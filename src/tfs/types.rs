@@ -8,6 +8,7 @@ pub const POINTERS_PER_INODE: usize = 5;
 pub const POINTERS_PER_BLOCK: usize = 1024;
 
 #[derive(Copy, Clone, Debug)]
+#[allow(dead_code)]
 pub struct Superblock {
     pub MagicNumber: u32,
     pub Blocks: u32,
@@ -16,28 +17,32 @@ pub struct Superblock {
 }
 
 #[derive(Copy, Clone, Debug)]
+#[allow(dead_code)]
 pub struct Inode {
-    pub Valid: u32,
-    pub Size: u32,
+    pub Valid: u32, // whether or not inode is valid (or allocated)
+    pub Size: u32,  // size of file
     pub Direct: [u32; POINTERS_PER_INODE],
     pub Indirect: u32
 }
 
 #[derive(Copy, Clone)]
+#[allow(dead_code)]
 pub union Block {
     pub Super: Superblock,
     pub Inodes: [Inode; INODES_PER_BLOCK],
-    pub Pointers: [usize; POINTERS_PER_BLOCK],
+    pub Pointers: [u32; POINTERS_PER_BLOCK],
     pub Data: [u8; Disk::BLOCK_SIZE]
 }
 
+// #[derive(Copy, Clone, Debug)]
+#[allow(dead_code)]
 pub struct MetaData {
     pub superBlock: Superblock,
     pub inodeTable: Vec<[Inode; INODES_PER_BLOCK]>
 }
 
 
-
+#[allow(dead_code)]
 impl Block {
     pub fn new() -> Self {
         Block {
@@ -63,7 +68,7 @@ impl Block {
         }
     }
 
-    pub fn pointers(&self) -> [usize; POINTERS_PER_BLOCK]{
+    pub fn pointers(&self) -> [u32; POINTERS_PER_BLOCK]{
         unsafe {
             self.Pointers
         }

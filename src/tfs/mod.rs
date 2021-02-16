@@ -5,9 +5,21 @@ mod utility;
 use self::disk::Disk;
 use self::types::*;
 
-pub struct FileSystem;
+pub struct FileSystem {
+    pub metaData: Option<MetaData>,
+    pub inodeBitMap: Option<Vec<bool>>,
+    pub dataBitMap: Option<Vec<bool>>
+}
 
 impl FileSystem {
+    fn new() -> Self {
+        FileSystem {
+            metaData: None,
+            inodeBitMap: None,
+            dataBitMap: None
+        }
+    }
+
     fn debug(disk: &mut Disk) {
         let metaData = Self::read_meta_data(disk);
         let superblock = metaData.superBlock;
@@ -66,6 +78,65 @@ impl FileSystem {
         true
     }
 
+    fn mount(&mut self, disk: &mut Disk) -> bool {
+        let metaData = Self::read_meta_data(disk);
+        let metaData2 = Self::read_meta_data(disk); // ...have no idea how to make a copy
+        if metaData.superBlock.MagicNumber != MAGIC_NUMBER as u32 {
+            return false
+        }
+
+        self.metaData = Some(metaData2);
+
+        let nBlocks = metaData.superBlock.Blocks;
+        let inodeBlocks = metaData.superBlock.InodeBlocks;
+
+        let mut inode_bit_map = Vec::new();
+        let mut data_bit_map = Vec::new();
+
+        // fill the data bit map to unused by default
+        for i in 0..nBlocks - inodeBlocks - 1 {
+            data_bit_map.push(false);
+        }
+
+        for inodes in metaData.inodeTable.iter() {
+            for inode in inodes.iter() {
+                if inode.Valid == 1u32 {
+                    inode_bit_map.push(true);
+
+                    // next, follow the direct blocks to see what data blocks it has
+                    for direct_ptr in inode.Direct.iter() {
+                        if *direct_ptr != 0u32 {
+                            data_bit_map[*direct_ptr as usize] = true
+                        }
+                    }
+
+                    // also, does this inode has indirect block?
+                    if inode.Indirect != 0u32 { // if so, read the block and scan
+                        let mut tmp_block = Block::new();
+                        let mut tmp_data = tmp_block.data();
+                        disk.read(inode.Indirect as usize, &mut tmp_data);
+                        tmp_block.set_data(tmp_data);
+
+                        // interpret tmp_block as pointers, then scan
+                        let indirect_ptr_blocks = tmp_block.pointers();
+                        for ptr in indirect_ptr_blocks.iter() {
+                            if *ptr != 0u32 {
+                                data_bit_map[*ptr as usize] = true
+                            }
+                        }
+                    }
+                } else {
+                    inode_bit_map.push(false);
+                }
+            }
+        }
+
+        self.inodeBitMap = Some(inode_bit_map);
+        self.dataBitMap = Some(data_bit_map);
+
+        true
+    }
+
     // helper functions
 
     fn read_meta_data(disk: &mut Disk) -> MetaData {
@@ -115,13 +186,15 @@ mod tests {
     fn test_format() {
         let mut disk = Disk::new();
         disk.open("./data/image.20", 20);
-
-        // let mut data = [0; Disk::BLOCK_SIZE];
-
         assert_eq!(FileSystem::format(&mut disk), true);
-        // disk.read(0, &mut data);
-        // println!("TEST READ: {}", data[2]);
-
         FileSystem::debug(&mut disk)
+    }
+
+    #[test]
+    fn test_mount() {
+        let mut disk = Disk::new();
+        disk.open("./data/image.20", 20);
+        let mut fs = FileSystem::new();
+        assert_eq!(fs.mount(&mut disk), true);
     }
 }
