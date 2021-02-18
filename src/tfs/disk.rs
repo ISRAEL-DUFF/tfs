@@ -6,17 +6,18 @@ use std::path::Path;
 // use std::fs::OpenOptions;
 
 #[allow(dead_code)]
-pub struct Disk {
+pub struct Disk<'a> {
     FileDescriptor: Option<File>,
     Blocks: usize,  // Number of blocks in disk image
     Reads: usize,   // Number of reads performed
     Writes: usize,  // Number of writes performed
     Mounts: usize,  // Number of mounts
+    Path: &'a str  // file path for the disk
 }
 
-impl Disk {
+impl<'a> Disk<'a> {
     pub const BLOCK_SIZE: usize = 4096;  // number of bytes per block
-    fn sanity_check<'a>(&self, blocknum: usize, data: &'a mut [u8]) {
+    fn sanity_check(&self, blocknum: usize) {
         if blocknum < 0 {
             panic!("Block Number is negative")
         }
@@ -27,20 +28,32 @@ impl Disk {
 
     }
 
-    pub fn new() -> Disk {
+    pub fn new() -> Disk<'a> {
         Disk {
             FileDescriptor: None,
             Blocks: 0,
             Reads: 0,
             Writes: 0,
-            Mounts: 0 
+            Mounts: 0 ,
+            Path: ""
         }
+    }
+
+    pub fn from_file(path: &'a str, nblocks: usize) -> Disk<'a> {
+        let mut disk = Self::new();
+        disk.open(path, nblocks);
+        disk
+    }
+
+    pub fn clone(&self) -> Disk<'a> {
+       Self::from_file(self.Path, self.size())
     }
 
     /// open disk image
     /// @param path     path to disk image
     /// @param nblocks  Number of blocks in disk image
-    pub fn open(&mut self, path: &str, nblocks: usize) {
+    pub fn open(&mut self, path: &'a str, nblocks: usize) {
+        let path_str = path;
         let path = Path::new(path);
         let display = path.display();
 
@@ -63,7 +76,7 @@ impl Disk {
         self.Blocks = nblocks;
         self.Reads = 0;
         self.Writes = 0;
-        println!("Open method");
+        self.Path = path_str;
     }
 
     pub fn size(&self) -> usize {
@@ -84,8 +97,8 @@ impl Disk {
         }
     }
 
-    pub fn read<'a>(&mut self, blocknum: usize, data: &'a mut [u8]) {
-        self.sanity_check(blocknum, data);
+    pub fn read<'b>(&mut self, blocknum: usize, data: &'b mut [u8]) {
+        self.sanity_check(blocknum);
 
         match self.FileDescriptor.as_mut() {
             Some(mut file) => {
@@ -97,8 +110,8 @@ impl Disk {
         }        
     }
 
-    pub fn write<'a>(&mut self, blocknum: usize, data: &'a mut [u8]) {
-        self.sanity_check(blocknum, data);
+    pub fn write<'c>(&mut self, blocknum: usize, data: &'c mut [u8]) {
+        self.sanity_check(blocknum);
         match self.FileDescriptor.as_mut() {
             Some(mut file) => {
                 file.seek(SeekFrom::Start( blocknum as u64 * Self::BLOCK_SIZE as u64));
@@ -132,6 +145,22 @@ mod tests {
         let mut data2 = [0; Disk::BLOCK_SIZE];
         disk.read(1, &mut data2);
 
+        assert_eq!(data, data2);
+    }
+
+    #[test]
+    fn disk_clone() {
+        let mut disk = Disk::new();
+        disk.open("./data/image.50", 50);
+        let mut data = [3; Disk::BLOCK_SIZE];
+        disk.write(1,&mut data);
+
+        let mut disk_clone = disk.clone();
+
+        let mut data2 = [4; Disk::BLOCK_SIZE];
+        disk_clone.read(1,&mut data2);
+
+        // compare values
         assert_eq!(data, data2);
     }
 }

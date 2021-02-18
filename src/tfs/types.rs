@@ -50,6 +50,18 @@ impl Block {
         }
     }
 
+    // ***************** get and set methods for Block fields *******************************
+    // NOTE: the get methods ALWAYS returns a FRESH COPY of the field values because
+    //      the fields are NOT reference types; they are OWNED types. Hence,
+    //      if you still want to refer to the original field value, use the corresponding
+    //      set methods. For example, 
+    ///    let block = Block::new()
+    ///    let mut data = block.data()   // 'data' would be a fresh copy of block.Data;
+    ///    data[1] = 4;     // this won't change the corresponding block.Data
+    //     however, if you wish to have this change reflect on Block.Data, use the set method:
+    ///    block.set_data(data)
+    // **************************************************************************************
+
     pub fn data(&self) -> [u8; Disk::BLOCK_SIZE] {
         unsafe {
             self.Data
@@ -77,6 +89,29 @@ impl Block {
     pub fn set_data(&mut self, data: [u8; Disk::BLOCK_SIZE]) {
         unsafe {
             self.Data = data;
+        }
+    }
+
+    pub fn set_inodes(&mut self, inodes: [Inode; INODES_PER_BLOCK]) {
+        unsafe {
+            self.Inodes = inodes;
+        }
+    }
+
+    pub fn set_superblock(&mut self, superblock: Superblock) {
+        unsafe {
+            self.Super = superblock;
+        }
+    }
+}
+
+impl Inode {
+    pub fn blank() -> Self {
+        Inode {
+            Valid: 0,
+            Size: 0,
+            Direct: [0; POINTERS_PER_INODE],
+            Indirect: 0
         }
     }
 }
