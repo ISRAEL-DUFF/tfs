@@ -98,6 +98,12 @@ impl Block {
         }
     }
 
+    pub fn set_pointers(&mut self, pointers: [u32; POINTERS_PER_BLOCK]) {
+        unsafe {
+            self.Pointers = pointers;
+        }
+    }
+
     pub fn set_superblock(&mut self, superblock: Superblock) {
         unsafe {
             self.Super = superblock;

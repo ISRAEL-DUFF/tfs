@@ -114,7 +114,7 @@ impl<'a> Disk<'a> {
         self.sanity_check(blocknum);
         match self.FileDescriptor.as_mut() {
             Some(mut file) => {
-                file.seek(SeekFrom::Start( blocknum as u64 * Self::BLOCK_SIZE as u64));
+                file.seek(SeekFrom::Start(blocknum as u64 * Self::BLOCK_SIZE as u64));
                 file.write(data);
                 self.Writes = self.Writes + 1;
             },
@@ -128,14 +128,14 @@ impl<'a> Disk<'a> {
 mod tests {
     use super::*;
 
-    #[test]
+    // #[test]
     fn disk_open() {
         let mut disk = Disk::new();
         assert_eq!(disk.open("./data/image.5", 5), ());
         assert_eq!(disk.size(), 5);
     }
 
-    #[test]
+    // #[test]
     fn disk_read_write() {
         let mut disk = Disk::new();
         disk.open("./data/image.5", 5);
@@ -148,7 +148,7 @@ mod tests {
         assert_eq!(data, data2);
     }
 
-    #[test]
+    // #[test]
     fn disk_clone() {
         let mut disk = Disk::new();
         disk.open("./data/image.50", 50);
