@@ -13,7 +13,7 @@ pub struct FileSystem<'a> {
 }
 
 impl<'a> FileSystem<'a> {
-    fn new() -> Self {
+    pub fn new() -> Self {
         FileSystem {
             metaData: None,
             inodeBitMap: None,
@@ -22,7 +22,16 @@ impl<'a> FileSystem<'a> {
         }
     }
 
-    fn from_disk(disk: &mut Disk<'a>) -> Self {
+    // pub fn clone(&self) -> Self {
+    //     FileSystem {
+    //         metaData: self.metaData,
+    //         inodeBitMap: self.inodeBitMap,
+    //         dataBitMap: self.dataBitMap,
+    //         disk: self.disk
+    //     }
+    // }
+
+    pub fn from_disk(disk: &mut Disk<'a>) -> Self {
         let mut fs = Self::new();
 
         // STEP 1: try mounting the disk
@@ -40,19 +49,19 @@ impl<'a> FileSystem<'a> {
         fs
     }
 
-    fn info(&self) {
+    pub fn info(&self) {
         match &self.metaData {
             Some(metaData) => Self::debug_print(metaData),
             _ => {}
         }
     }
 
-    fn debug(disk: &mut Disk<'a>) {
+    pub fn debug(disk: &mut Disk<'a>) {
         let metaData = Self::read_meta_data(disk);
         Self::debug_print(&metaData);
     }
 
-    fn debug_print(meta_data: &MetaData) {
+    pub fn debug_print(meta_data: &MetaData) {
         let superblock = &meta_data.superBlock;
         let inodeTable = &meta_data.inodeTable;
 
@@ -86,7 +95,7 @@ impl<'a> FileSystem<'a> {
 
     }
 
-    fn format(disk: &mut Disk<'a>) -> bool {
+    pub fn format(disk: &mut Disk<'a>) -> bool {
         // STEP 1: set aside 10% of blocks for inodes
         let total_inode_blocks = (disk.size() as f64 * 0.1).ceil() as usize;
 
@@ -109,7 +118,7 @@ impl<'a> FileSystem<'a> {
         true
     }
 
-    fn mount(&mut self, disk: &mut Disk<'a>) -> bool {
+    pub fn mount(&mut self, disk: &mut Disk<'a>) -> bool {
         let metaData = Self::read_meta_data(disk);
         let metaData2 = Self::read_meta_data(disk); // ...have no idea how to make a copy
         // println!("metaData: {:?}", metaData.inodeTable);
@@ -174,7 +183,7 @@ impl<'a> FileSystem<'a> {
         true
     }
 
-    fn create(&mut self) -> usize {
+    pub fn create(&mut self) -> usize {
         // locate free inode in inode table
         match &mut self.inodeBitMap {
             Some(i_bitmap) => {
@@ -207,7 +216,7 @@ impl<'a> FileSystem<'a> {
         }
     }
 
-    fn remove(&mut self, inumber: usize) -> bool {
+    pub fn remove(&mut self, inumber: usize) -> bool {
         // load inode info
         let mut inode = Inode::blank();
         let inode_loaded = self.load_inode(inumber, &mut inode);
@@ -259,7 +268,7 @@ impl<'a> FileSystem<'a> {
 
     }
 
-    fn stat(&mut self, inumber: usize) -> i64 {
+   pub fn stat(&mut self, inumber: usize) -> i64 {
         let mut inode = Inode::blank();
         if self.load_inode(inumber, &mut inode) {
             inode.Size as i64
@@ -268,67 +277,40 @@ impl<'a> FileSystem<'a> {
         }
     }
 
-    fn read(&mut self, inumber: usize, data: &mut [u8], length: usize, offset: usize) -> i64 {
-        // load inode info
-        let mut inode = Inode::blank();
-        if !self.load_inode(inumber, &mut inode) {
+    fn read_from_block(
+        &mut self, block_num: usize, data_offset: usize, 
+        data: &mut [u8], length: usize, offset: usize
+    ) -> i64 {
+        // adjust length
+        let mut read_length = length;
+        let total_length = data_offset + length;
+        if total_length > Disk::BLOCK_SIZE {
+            read_length = length - (total_length - Disk::BLOCK_SIZE);
+
+            if data_offset + read_length > data.len() {
+                read_length = data.len() - data_offset;
+            }
+        }
+
+        // sanity check
+        if offset > Disk::BLOCK_SIZE || data_offset > data.len(){
             return -1;
         }
 
-        // adjust length
-        let mut read_length = length;
-        let total_length = offset + length;
-        if total_length > inode.Size as usize {
-            read_length = length - (total_length - inode.Size as usize);
-        }
-
-        // Read block and copy data
+        // read data from disk
         match &mut self.disk {
             Some(disk) => {
-                // let mut data_index = 0; // index into the 'data' parameter
                 let mut blk_data = [0; Disk::BLOCK_SIZE];
+                disk.read(block_num, &mut blk_data);
                 let mut bytes_read = 0;
-                for blk in inode.Direct.iter() {
-                    if *blk > 0 {
-                        disk.read(*blk as usize, &mut blk_data);
-                        for d in blk_data.iter() {
-                            if bytes_read < read_length {
-                                data[bytes_read] = *d;
-                                // data_index += 1;
-                                bytes_read += 1;
-                            } else {
-                                return bytes_read as i64;
-                            }
-                        }
+                let mut i = offset;
+                while i < Disk::BLOCK_SIZE {
+                    if bytes_read < read_length {
+                        data[data_offset + bytes_read] = blk_data[i];
+                        bytes_read += 1;
+                        i += 1;
                     } else {
                         return bytes_read as i64;
-                    }
-                }
-
-                // still haven't got to end of file yet? --- read indirect block
-                if bytes_read < read_length {
-                    let mut indirect_block = Block::new();
-                    let mut indirect_blk_data = indirect_block.data();
-                    if inode.Indirect > 0 {
-                        disk.read(inode.Indirect as usize, &mut indirect_blk_data);
-                        indirect_block.set_data(indirect_blk_data);
-                        let indirect_pointers = indirect_block.pointers();
-
-                        for blk in indirect_pointers.iter() {
-                            if *blk > 0 {
-                                disk.read(*blk as usize, &mut blk_data);
-                                for d in blk_data.iter() {
-                                    if bytes_read < read_length {
-                                        data[bytes_read] = *d;
-                                        bytes_read += 1;
-                                    } else {
-                                        return bytes_read as i64;
-                                    }
-                                }
-                            } else {
-                                return bytes_read as i64;
-                            }
-                        }
                     }
                 }
                 return bytes_read as i64;
@@ -339,7 +321,118 @@ impl<'a> FileSystem<'a> {
         }
     }
 
-    fn write(&mut self, inumber: usize, data: &mut [u8], length: usize, offset: usize) -> i64 {
+    pub fn read(
+        &mut self, inumber: usize, 
+        data: &mut [u8], length: usize, offset: usize
+    ) -> i64 {
+        // load inode info
+        let mut inode = Inode::blank();
+        if !self.load_inode(inumber, &mut inode) {
+            return -1;
+        }
+
+        // compute initial block and offset index
+        let mut block_index = (offset as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
+        let block_offset = offset % Disk::BLOCK_SIZE;
+
+        let mut block = Block::new();
+        let mut has_indirect_blk = false;
+        let mut indirect_blks: [u32; POINTERS_PER_BLOCK] = [0; POINTERS_PER_BLOCK];
+        let mut bytes_read = 0;
+        let mut j = 0;
+        loop {
+            if bytes_read == length || j == length {
+                return bytes_read as i64;
+            }
+
+            if block_index < POINTERS_PER_INODE {
+                if inode.Direct[block_index] > 0 {
+                    // use the block number for reading
+                    let r = self.read_from_block(
+                        inode.Direct[block_index] as usize, bytes_read as usize, 
+                        data, length - bytes_read, block_offset
+                    );
+                    if r > -1 {
+                        bytes_read += r as usize;
+                    } else {
+                        return -1;
+                    }
+                } else {
+                    return -1;
+                }
+            } else {
+                if !has_indirect_blk {
+                    match &mut self.disk {
+                        Some(disk) => {
+                            let mut blk_d = block.data();
+                            disk.read(inode.Indirect as usize, &mut blk_d);
+                            block.set_data(blk_d);
+                            indirect_blks = block.pointers();
+                            has_indirect_blk = true;
+                        },
+                        _ => { return -1; }
+                    }
+                }
+                
+                // use block index to get block number from indirect pointer
+                if indirect_blks[block_index] > 0 {
+                    let r = self.read_from_block(
+                        indirect_blks[block_index] as usize, bytes_read as usize, 
+                        data, length - bytes_read, block_offset
+                    );
+                    if r > -1 {
+                        bytes_read += r as usize;
+                    } else {
+                        return -1;
+                    }
+                } else {
+                    return -1;
+                }
+            }
+            j += 1;
+            println!("BYTES INDEX: {}, {}", block_index, block_offset);
+        }
+
+        -1
+        
+    }
+
+    fn write_to_block(
+        &mut self, block_num: usize, block_offset: usize, 
+        data: &mut [u8], length: usize, offset: usize
+    ) -> i64 {
+        let mut bytes_writen = 0;
+        if block_offset < Disk::BLOCK_SIZE && offset < data.len() { // this block is not filled yet
+            let disc = match &mut self.disk {
+                Some(disk) => disk,
+                _ => {
+                    return -1;
+                }
+            };
+            let mut disk = disc.clone(); // just to avoid compiler error about multiple mutable ref of disc
+            // println!("OVERFLOW: {}, {}, {}, {}",block_offset, offset, length, data.len());
+            // println!("DTA: {:?}", data);
+
+            let mut block_offset = block_offset;
+            let mut length = length;
+            if offset + length > data.len() {
+                length = data.len() - offset;
+            }
+            let mut blk_data = [0; Disk::BLOCK_SIZE];
+            disk.read(block_num, &mut blk_data);
+            while block_offset < Disk::BLOCK_SIZE && bytes_writen < length {
+                blk_data[block_offset] = data[offset + bytes_writen];
+                bytes_writen += 1;
+                block_offset += 1;
+                // println!("www: {}, {}, {}", bytes_writen, block_offset, offset + bytes_writen);
+            }
+            disk.write(block_num, &mut blk_data);
+            return bytes_writen as i64;
+        }
+        return bytes_writen as i64;
+    }
+
+    pub fn write(&mut self, inumber: usize, data: &mut [u8], length: usize, offset: usize) -> i64 {
         // load inode
         let mut inode = Inode::blank();
         if !self.load_inode(inumber, &mut inode) {
@@ -352,13 +445,13 @@ impl<'a> FileSystem<'a> {
         let mut bytes_writen = 0;
         let block_index = (inode.Size as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
         let mut block_offset: usize = (inode.Size as usize % Disk::BLOCK_SIZE) as usize;
-        // println!("COMPUTED BLOCK INDEX: {}", block_index);
+        // println!("COMPUTED BLOCK INDEX: {}, {:?}", block_index, data);
         let mut block_num: usize;
         if block_index < POINTERS_PER_BLOCK {
             if inode.Direct[block_index] > 0 {
                 block_num = inode.Direct[block_index] as usize;
             } else {
-                // println!("ALLOCATING NEW DIRECT PTR BLOCK...");
+                println!("ALLOCATING NEW DIRECT PTR BLOCK...");
                 let blk = self.allocate_free_block(inumber);
                 if blk == -1 {
                     return -1;
@@ -393,11 +486,11 @@ impl<'a> FileSystem<'a> {
             }
         }
 
-        println!("BLOCK NUMBER: {}", block_num);
+        println!("BLOCK NUMBER: {}, b_offset: {}, offset: {}", block_num, block_offset, offset);
 
 
         loop {
-            if bytes_writen < length {
+            if bytes_writen < length && (offset + bytes_writen) < data.len() {
                 let bytes_wr = self.write_to_block(block_num, block_offset, data, length - bytes_writen, offset + bytes_writen);
                 println!("bytes_wr: {}", bytes_wr);
                 if bytes_wr == 0 {
@@ -415,10 +508,6 @@ impl<'a> FileSystem<'a> {
                     bytes_writen += bytes_wr as usize;
                     inode.Size += bytes_wr as u32;
                     block_offset = (inode.Size as usize % Disk::BLOCK_SIZE) as usize;
-                    // println!(
-                    //     "Writing data... block_num: {}, byte_writen: {}, bytes_wr: {}, file size: {}, length: {}", 
-                    //     block_num, block_num, bytes_wr, inode.Size, length
-                    // );
                 }
             } else {
                 self.save_inode(inumber, &mut inode);
@@ -675,40 +764,6 @@ impl<'a> FileSystem<'a> {
 
         -1
     }
-
-    fn write_to_block(
-        &mut self, block_num: usize, block_offset: usize, 
-        data: &mut [u8], length: usize, offset: usize
-    ) -> i64 {
-        let mut bytes_writen = 0;
-        if block_offset < Disk::BLOCK_SIZE && offset < data.len() { // this block is not filled yet
-            let disc = match &mut self.disk {
-                Some(disk) => disk,
-                _ => {
-                    return -1;
-                }
-            };
-            let mut disk = disc.clone(); // just to avoid compiler error about multiple mutable ref of disc
-            // println!("OVERFLOW: {}, {}, {}", offset + bytes_writen, length, data.len());
-
-            let mut block_offset = block_offset;
-            let mut length = length;
-            if offset + length > data.len() {
-                length = data.len() - offset;
-            }
-            let mut blk_data = [0; Disk::BLOCK_SIZE];
-            disk.read(block_num, &mut blk_data);
-            while block_offset < Disk::BLOCK_SIZE && bytes_writen < length {
-                blk_data[block_offset] = data[offset + bytes_writen];
-                bytes_writen += 1;
-                block_offset += 1;
-            }
-            disk.write(block_num, &mut blk_data);
-            return bytes_writen as i64;
-        }
-        return -1;
-        // bytes_writen as i64
-    }
 }
 
 pub mod prelude {
@@ -768,9 +823,10 @@ mod tests {
     fn to_mut_data (txt: &str) -> [u8; 4096] {
         let data = txt.as_bytes();
         let mut d = [0; 4096];
-        let j = 0;
+        let mut j = 0;
         for i in data.iter() {
             d[j] = *i;
+            j += 1;
         }
         d
     }
@@ -783,26 +839,20 @@ mod tests {
         let mut data = to_mut_data("Hello, World this is great string");
         let mut data_r = [0; 4096];
         let mut i = 0;
-        // loop {
-        //     if i <= 10 {
-        //         fs.write(inode1, &mut data, (inode1 +1 + i) * 450, i);
-        //         i += 1;
-        //     } else {
-        //         break;
-        //     }
-        // }
-        fs.write(inode1, &mut data, 33, 1);
+        
+        let b1 = fs.write(inode1, &mut data, 33, 0);
         FileSystem::debug(&mut disk);
         fs.info();
 
-        fs.read(inode1, &mut data_r, 33, 1);
+        let b2 = fs.read(inode1, &mut data_r, 33, 0);
 
-        assert_eq!(data_r, data);
+        let str1 = std::str::from_utf8(&data_r).unwrap().to_string();
+        let str2 = std::str::from_utf8(&data).unwrap().to_string();
 
-        let strrr1 = std::str::from_utf8(&data_r).unwrap().to_string();
-        let strrr2 = std::str::from_utf8(&data).unwrap().to_string();
-
-        println!("STRING 1: {}, STRING 2: {}", strrr1, strrr2);
+        println!("STRING 1: {}, STRING 2: {}", str1, str2);
+        println!("bytes writen: {}, bytes read: {}", b1, b2);
+    
+        assert_eq!(str1, str2);
 
     }
 }
