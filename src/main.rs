@@ -63,11 +63,15 @@ fn main() {
             let r = do_copyout(disk, fs, command);
             disk = r.0;
             fs = r.1;
+        } else if cmd == "cat" {
+            let f = do_cat(fs, command);
+            fs = f;
         }
         else if cmd == "exit" || cmd == "quit" {
             break;
         } else {
             println!("Unknown command: {}", line);
+            println!("Type 'help' for a list of commands");
         }
     }
 }
@@ -306,9 +310,28 @@ fn copyout<'a>(mut fs: FileSystem<'a>, path: &str, inumber: usize) -> (FileSyste
             break;
         }
 
-        file.write(&mut buffer);
+        if result < Disk::BLOCK_SIZE as i64 {
+            let mut buff = &buffer[0..result as usize];
+            file.write(&mut buff);            
+        } else {
+            file.write(&mut buffer);
+        }
         offset += result as usize;
     }
     println!("{} bytes copied", offset);
     (fs, true)
+}
+
+fn do_cat<'a>(mut fs: FileSystem<'a>, args: Vec<&str>) -> FileSystem<'a> {
+    if args.len() != 2 {
+        println!("Usage: cat <inode>");
+        return fs;
+    } else {
+        let inumber = args[1].parse().unwrap();
+        let (f, copied) = copyout(fs, "/dev/stdout", inumber);
+        if !copied {
+            println!("cat failed!");
+        }
+        return f;
+    }
 }

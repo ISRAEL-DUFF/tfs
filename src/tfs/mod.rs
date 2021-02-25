@@ -292,6 +292,9 @@ impl<'a> FileSystem<'a> {
             }
         }
 
+        println!("R: {}", read_length);
+
+
         // sanity check
         if offset > Disk::BLOCK_SIZE || data_offset > data.len(){
             return -1;
@@ -329,6 +332,13 @@ impl<'a> FileSystem<'a> {
         let mut inode = Inode::blank();
         if !self.load_inode(inumber, &mut inode) {
             return -1;
+        }
+
+        // adjust length
+        let mut length = length;
+        let total_length = offset + length;
+        if total_length > inode.Size as usize {
+            length = length - (total_length - inode.Size as usize);
         }
 
         // compute initial block and offset index
@@ -375,9 +385,10 @@ impl<'a> FileSystem<'a> {
                 }
                 
                 // use block index to get block number from indirect pointer
-                if indirect_blks[block_index] > 0 {
+                let indirect_blk_index = block_index - POINTERS_PER_INODE;
+                if indirect_blks[indirect_blk_index] > 0 {
                     let r = self.read_from_block(
-                        indirect_blks[block_index] as usize, bytes_read as usize, 
+                        indirect_blks[indirect_blk_index] as usize, bytes_read as usize, 
                         data, length - bytes_read, block_offset
                     );
                     if r > -1 {
@@ -410,8 +421,6 @@ impl<'a> FileSystem<'a> {
                 }
             };
             let mut disk = disc.clone(); // just to avoid compiler error about multiple mutable ref of disc
-            // println!("OVERFLOW: {}, {}, {}, {}",block_offset, offset, length, data.len());
-            // println!("DTA: {:?}", data);
 
             let mut block_offset = block_offset;
             let mut length = length;
@@ -424,7 +433,6 @@ impl<'a> FileSystem<'a> {
                 blk_data[block_offset] = data[offset + bytes_writen];
                 bytes_writen += 1;
                 block_offset += 1;
-                // println!("www: {}, {}, {}", bytes_writen, block_offset, offset + bytes_writen);
             }
             disk.write(block_num, &mut blk_data);
             return bytes_writen as i64;
@@ -439,19 +447,21 @@ impl<'a> FileSystem<'a> {
             return -1;
         }
 
-        // write block and copy to inode data
+        let mut disc = match &mut self.disk {
+            Some(d) => d,
+            _ => { return -1; }
+         };
+         let mut disk = disc.clone();
 
         // locate the last block in this inode
         let mut bytes_writen = 0;
         let block_index = (inode.Size as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
         let mut block_offset: usize = (inode.Size as usize % Disk::BLOCK_SIZE) as usize;
-        // println!("COMPUTED BLOCK INDEX: {}, {:?}", block_index, data);
         let mut block_num: usize;
-        if block_index < POINTERS_PER_BLOCK {
+        if block_index < POINTERS_PER_INODE {
             if inode.Direct[block_index] > 0 {
                 block_num = inode.Direct[block_index] as usize;
             } else {
-                println!("ALLOCATING NEW DIRECT PTR BLOCK...");
                 let blk = self.allocate_free_block(inumber);
                 if blk == -1 {
                     return -1;
@@ -460,39 +470,44 @@ impl<'a> FileSystem<'a> {
                 block_num = blk as usize;
             }
         } else {
-            block_num = match &mut self.disk {
-                Some(disk) => {
-                    let mut block = Block::new();
-                    let mut blk_d = block.data();
-                    disk.read(inode.Indirect as usize, &mut blk_d);
-                    block.set_data(blk_d);
-                    let mut ptrs = block.pointers();
-
-                    if ptrs[block_index - POINTERS_PER_BLOCK] > 0 {
-                        ptrs[block_index - POINTERS_PER_BLOCK] as usize
-                    } else {
-                        // println!("ALLOCATING NEW INDIRECT PTR BLOCK...");
-                        let blk = self.allocate_free_block(inumber);
-                        if blk == -1 {
-                            return -1;
-                        }
-                        ptrs[block_index - POINTERS_PER_BLOCK] = blk as u32;
-                        blk as usize
-                    }
-                },
-                _ => {
+            // make sure an indirect block has been allocated
+            if inode.Indirect == 0 {
+                let blk = self.allocate_free_block(inumber);
+                if blk == -1 {
                     return -1;
                 }
+                inode.Indirect = blk as u32;
+                self.save_inode(inumber, &mut inode);
+                disk.write(blk as usize, &mut [0; Disk::BLOCK_SIZE]);
+            }
+
+            let mut block = Block::new();
+            let mut blk_d = block.data();
+
+
+            disk.read(inode.Indirect as usize, &mut blk_d);
+            block.set_data(blk_d);
+            let mut ptrs = block.pointers();
+
+            if ptrs[block_index - POINTERS_PER_INODE] > 0 {
+               block_num = ptrs[block_index - POINTERS_PER_INODE] as usize;
+            } else {
+                let blk = self.allocate_free_block(inumber);
+                if blk == -1 {
+                    return -1;
+                }
+                ptrs[block_index - POINTERS_PER_INODE] = blk as u32;
+                block_num = blk as usize
             }
         }
 
-        println!("BLOCK NUMBER: {}, b_offset: {}, offset: {}", block_num, block_offset, offset);
+        // println!("BLOCK NUMBER: {}, b_offset: {}, offset: {}", block_num, block_offset, offset);
 
-
+        // write block and copy to inode data
         loop {
             if bytes_writen < length && (offset + bytes_writen) < data.len() {
                 let bytes_wr = self.write_to_block(block_num, block_offset, data, length - bytes_writen, offset + bytes_writen);
-                println!("bytes_wr: {}", bytes_wr);
+                println!("bytes_writen: {}", bytes_wr);
                 if bytes_wr == 0 {
                     // allocate more blocks for data
                     let blk = self.allocate_free_block(inumber);
@@ -501,7 +516,6 @@ impl<'a> FileSystem<'a> {
                     }
                     block_num = blk as usize;
                     block_offset = 0;
-                    // println!("ALLOCATED BLOCK: {}", block_num);
                 } else if bytes_wr == -1 {
                     return -1;  // something bad happened
                 } else {
@@ -511,7 +525,7 @@ impl<'a> FileSystem<'a> {
                 }
             } else {
                 self.save_inode(inumber, &mut inode);
-                println!("Bytes writen: {}", bytes_writen);
+                println!("Total bytes writen: {}", bytes_writen);
                 return bytes_writen as i64;
             }
         }
@@ -643,7 +657,7 @@ impl<'a> FileSystem<'a> {
                 match &mut self.metaData {
                     Some(metaData) => {
                         if metaData.inodeTable.len() < blk { // add inodes for block blk
-                            println!("GGGGGGGGGGGGGG");
+                            println!(" I don't think this section will ever execute");
                             metaData.inodeTable.push(block.inodes());
                         } else {
                             metaData.inodeTable[blk - 1][row_blk] = *inode;
