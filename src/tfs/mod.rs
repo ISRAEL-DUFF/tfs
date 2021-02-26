@@ -340,7 +340,12 @@ impl<'a> FileSystem<'a> {
 
         // compute initial block and offset index
         let block_index = (offset as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
-        let block_offset = offset % Disk::BLOCK_SIZE;
+        // let block_offset = offset % Disk::BLOCK_SIZE;
+
+        let (block_n, block_offset) = self.get_block_num(inumber, offset);
+        if block_n > 0 {
+            return -1;
+        }
 
         let mut block = Block::new();
         let mut has_indirect_blk = false;
@@ -352,51 +357,17 @@ impl<'a> FileSystem<'a> {
                 return bytes_read as i64;
             }
 
-            if block_index < POINTERS_PER_INODE {
-                if inode.direct[block_index] > 0 {
-                    // use the block number for reading
-                    let r = self.read_from_block(
-                        inode.direct[block_index] as usize, bytes_read as usize, 
-                        data, length - bytes_read, block_offset
-                    );
-                    if r > -1 {
-                        bytes_read += r as usize;
-                    } else {
-                        return -1;
-                    }
-                } else {
-                    return -1;
-                }
+            // use the block number for reading
+            let r = self.read_from_block(
+                block_n as usize, bytes_read as usize, 
+                data, length - bytes_read, block_offset
+            );
+            if r > -1 {
+                bytes_read += r as usize;
             } else {
-                if !has_indirect_blk {
-                    match &mut self.disk {
-                        Some(disk) => {
-                            let mut blk_d = block.data();
-                            disk.read(inode.single_indirect as usize, &mut blk_d);
-                            block.set_data(blk_d);
-                            indirect_blks = block.pointers();
-                            has_indirect_blk = true;
-                        },
-                        _ => { return -1; }
-                    }
-                }
-                
-                // use block index to get block number from indirect pointer
-                let indirect_blk_index = block_index - POINTERS_PER_INODE;
-                if indirect_blks[indirect_blk_index] > 0 {
-                    let r = self.read_from_block(
-                        indirect_blks[indirect_blk_index] as usize, bytes_read as usize, 
-                        data, length - bytes_read, block_offset
-                    );
-                    if r > -1 {
-                        bytes_read += r as usize;
-                    } else {
-                        return -1;
-                    }
-                } else {
-                    return -1;
-                }
+                return -1;
             }
+ 
             j += 1;
             println!("BYTES INDEX: {}, {}", block_index, block_offset);
         }        
@@ -767,6 +738,63 @@ impl<'a> FileSystem<'a> {
         }
 
         -1
+    }
+
+    fn get_block_num(&mut self, inumber: usize, offset: usize) -> (i64, usize) {
+        // load inode info
+        let mut inode = Inode::blank();
+        if !self.load_inode(inumber, &mut inode) {
+            return (-1, 0);
+        }
+
+        // compute initial block and offset index
+        let block_index = (offset as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
+        let block_offset = offset % Disk::BLOCK_SIZE;
+
+        // let mut indirect_blks: [u32; POINTERS_PER_BLOCK] = [0; POINTERS_PER_BLOCK];
+        // let mut double_indirect_blks: [u32; POINTERS_PER_BLOCK] = [0; POINTERS_PER_BLOCK];
+        // let mut triple_indirect_blks: [u32; POINTERS_PER_BLOCK] = [0; POINTERS_PER_BLOCK];
+
+
+        let get_blks = |disk: Option<&mut Disk>, ptr: u32| {
+            let mut block = Block::new();
+            match disk {
+                Some(mut disc) => {
+                    let mut blk_d = block.data();
+                    disc.read(ptr as usize, &mut blk_d);
+                    block.set_data(blk_d);
+                    return block.pointers();
+                },
+                _ => { return block.pointers(); }
+            }
+        };
+
+        if block_index < POINTERS_PER_INODE {
+            if inode.direct[block_index] > 0 {
+                // use the block number for reading
+                return (inode.direct[block_index] as i64, block_offset)
+            } else {
+                return (-1, block_offset);
+            }
+
+        } else if block_index < POINTERS_PER_INODE + POINTERS_PER_BLOCK {
+            let mut indirect_blks = get_blks(self.disk.as_mut(), inode.single_indirect);
+
+            // use block index to get block number from indirect pointer
+            let indirect_blk_index = block_index - POINTERS_PER_INODE;
+            if indirect_blks[indirect_blk_index] > 0 {
+                return (indirect_blks[indirect_blk_index] as i64, block_offset);
+            } else {
+                return (-1, block_offset);
+            }
+        } else if block_index < POINTERS_PER_INODE +  POINTERS_PER_BLOCK.pow(2) {
+            return (-1, block_offset);
+
+        } else if block_index < POINTERS_PER_INODE + POINTERS_PER_BLOCK.pow(3) {
+            return (-1, block_offset);
+        } else {
+            return (-1, 0);
+        }
     }
 }
 

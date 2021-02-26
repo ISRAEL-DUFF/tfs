@@ -3,9 +3,9 @@ use super::disk::Disk;
 // use super::utility;
 
 pub const MAGIC_NUMBER: usize = 0xf0f03410;
-pub const INODES_PER_BLOCK: usize   = 128;
+pub const INODES_PER_BLOCK: usize   = 128;  // this is calculated as: disk.BLOCK_SIZE / inode_size
 pub const POINTERS_PER_INODE: usize = 5;
-pub const POINTERS_PER_BLOCK: usize = 1024;
+pub const POINTERS_PER_BLOCK: usize = 1024; // this is calculated as: disk.BLOCK_SIZE / 4
 
 #[derive(Copy, Clone, Debug)]
 #[allow(dead_code)]
