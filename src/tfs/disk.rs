@@ -7,12 +7,12 @@ use std::path::Path;
 
 #[allow(dead_code)]
 pub struct Disk<'a> {
-    FileDescriptor: Option<File>,
-    Blocks: usize,  // Number of blocks in disk image
-    Reads: usize,   // Number of reads performed
-    Writes: usize,  // Number of writes performed
-    Mounts: usize,  // Number of mounts
-    Path: &'a str  // file path for the disk
+    file_descriptor: Option<File>,
+    blocks: usize,  // Number of blocks in disk image
+    reads: usize,   // Number of reads performed
+    writes: usize,  // Number of writes performed
+    mounts: usize,  // Number of mounts
+    path: &'a str  // file path for the disk
 }
 
 impl<'a> Disk<'a> {
@@ -22,7 +22,7 @@ impl<'a> Disk<'a> {
             panic!("Block Number is negative")
         }
 
-        if blocknum >= self.Blocks {
+        if blocknum >= self.blocks {
             panic!("Block Number is too big")
         }
 
@@ -30,12 +30,12 @@ impl<'a> Disk<'a> {
 
     pub fn new() -> Disk<'a> {
         Disk {
-            FileDescriptor: None,
-            Blocks: 0,
-            Reads: 0,
-            Writes: 0,
-            Mounts: 0 ,
-            Path: ""
+            file_descriptor: None,
+            blocks: 0,
+            reads: 0,
+            writes: 0,
+            mounts: 0 ,
+            path: ""
         }
     }
 
@@ -46,7 +46,7 @@ impl<'a> Disk<'a> {
     }
 
     pub fn clone(&self) -> Disk<'a> {
-       Self::from_file(self.Path, self.size())
+       Self::from_file(self.path, self.size())
     }
 
     /// open disk image
@@ -57,13 +57,13 @@ impl<'a> Disk<'a> {
         let path = Path::new(path);
         let display = path.display();
 
-        let mut file = OpenOptions::new()
+        let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .open(path);
         
-        self.FileDescriptor = match file {
+        self.file_descriptor = match file {
             Ok(f) => {
                 f.set_len((nblocks as u64) * (Self::BLOCK_SIZE as u64));
                 Some(f)
@@ -73,38 +73,38 @@ impl<'a> Disk<'a> {
             }
         };
 
-        self.Blocks = nblocks;
-        self.Reads = 0;
-        self.Writes = 0;
-        self.Path = path_str;
+        self.blocks = nblocks;
+        self.reads = 0;
+        self.writes = 0;
+        self.path = path_str;
     }
 
     pub fn size(&self) -> usize {
-        self.Blocks
+        self.blocks
     }
 
     pub fn mount(&mut self) {
-        self.Mounts = self.Mounts + 1; 
+        self.mounts = self.mounts + 1; 
     }
 
     pub fn mounted(&mut self) -> bool {
-        self.Mounts > 0
+        self.mounts > 0
     }
 
     pub fn unmount(&mut self) {
-        if self.Mounts > 0 {
-            self.Mounts = self.Mounts - 1;
+        if self.mounts > 0 {
+            self.mounts = self.mounts - 1;
         }
     }
 
     pub fn read<'b>(&mut self, blocknum: usize, data: &'b mut [u8]) {
         self.sanity_check(blocknum);
 
-        match self.FileDescriptor.as_mut() {
-            Some(mut file) => {
+        match self.file_descriptor.as_mut() {
+            Some(file) => {
                 file.seek(SeekFrom::Start( blocknum as u64 * Self::BLOCK_SIZE as u64));
                 file.read(data);
-                self.Reads = self.Reads + 1;
+                self.reads = self.reads + 1;
             },
             None => println!("No file yet")
         }        
@@ -112,11 +112,11 @@ impl<'a> Disk<'a> {
 
     pub fn write<'c>(&mut self, blocknum: usize, data: &'c mut [u8]) {
         self.sanity_check(blocknum);
-        match self.FileDescriptor.as_mut() {
-            Some(mut file) => {
+        match self.file_descriptor.as_mut() {
+            Some(file) => {
                 file.seek(SeekFrom::Start(blocknum as u64 * Self::BLOCK_SIZE as u64));
                 file.write(data);
-                self.Writes = self.Writes + 1;
+                self.writes = self.writes + 1;
             },
             None => println!("No file yet")
         }        
