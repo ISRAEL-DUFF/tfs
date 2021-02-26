@@ -501,8 +501,6 @@ impl<'a> FileSystem<'a> {
             }
         }
 
-        // println!("BLOCK NUMBER: {}, b_offset: {}, offset: {}", block_num, block_offset, offset);
-
         // write block and copy to inode data
         loop {
             if bytes_writen < length && (offset + bytes_writen) < data.len() {
@@ -825,11 +823,9 @@ mod tests {
         let inode2 = fs.create();
         let inode3 = fs.create();
         let inode4 = fs.create();
-        println!("created INODES: {}, {}, {}, {}", inode1, inode2, inode3, inode4);
         fs.info();
 
         fs.remove(inode2);
-        println!("removed INODES: {}", inode2);
 
         fs.info()
     }
