@@ -7,8 +7,6 @@ use self::types::*;
 
 pub struct FileSystem<'a> {
     pub meta_data: Option<MetaData>,
-    pub inode_bitmap: Option<Vec<bool>>,
-    pub data_bitmap: Option<Vec<bool>>,
     pub disk: Option<Disk<'a>>
 }
 
@@ -16,20 +14,9 @@ impl<'a> FileSystem<'a> {
     pub fn new() -> Self {
         FileSystem {
             meta_data: None,
-            inode_bitmap: None,
-            data_bitmap: None,
             disk: None
         }
     }
-
-    // pub fn clone(&self) -> Self {
-    //     FileSystem {
-    //         metaData: self.metaData,
-    //         inodeBitMap: self.inodeBitMap,
-    //         dataBitMap: self.dataBitMap,
-    //         disk: self.disk
-    //     }
-    // }
 
     pub fn from_disk(disk: &mut Disk<'a>) -> Self {
         let mut fs = Self::new();
@@ -49,26 +36,33 @@ impl<'a> FileSystem<'a> {
         fs
     }
 
-    pub fn info(&self) {
-        match &self.meta_data {
-            Some(meta_data) => Self::debug_print(meta_data),
+    pub fn info(&mut self) {
+        match &mut self.meta_data {
+            Some(meta_data) => {
+                match &mut self.disk {
+                    Some(disk) => {
+                        Self::debug_print(meta_data, disk)
+                    },
+                    None => {}
+                }
+            },
             _ => {}
         }
     }
 
     pub fn debug(disk: &mut Disk<'a>) {
-        let meta_data = Self::read_meta_data(disk);
-        Self::debug_print(&meta_data);
+        let mut meta_data = Self::read_meta_data(disk);
+        Self::debug_print(&mut meta_data, disk);
     }
 
-    pub fn debug_print(meta_data: &MetaData) {
+    pub fn debug_print(meta_data: &mut MetaData, disk: &mut Disk<'a>) {
         let superblock = &meta_data.superblock;
-        let inode_table = &meta_data.inode_table;
 
         println!("********* SUPER BLOCK ***********");
         println!("Magic Number  {} is valid", superblock.magic_number);
         println!("{} blocks", superblock.blocks);
-        println!("{} inode blocks", superblock.inode_blocks);
+        println!("Next free block position: {}", superblock.current_block_index);
+        // println!("{} inode blocks", superblock.inode_blocks);
         println!("{} inodes", superblock.inodes);
         println!("********* END SUPER ***********\n");
 
@@ -76,144 +70,102 @@ impl<'a> FileSystem<'a> {
         let mut i_number = 0;
         let mut end_of_tab = false;
         println!("********* INODE INFO ***********");
-        for inodes in inode_table.iter() {
-            if !end_of_tab {
-                for inode in inodes.iter() {
-                    if i_number < superblock.inodes {
-                        i_number += 1;
-                        println!("Inode {}:", i_number);
-                        println!("  size: {} bytes", inode.size);
-                        println!("  direct blocks: {}", inode.direct.len())
-                    } else {
-                        end_of_tab = true;
-                        break
-                    }
-                }
-            }
+        // let inode_block = meta_data.inodes_root_block.inode_block();
+        let inode_list = InodeList::new(meta_data, disk.clone());
+        let mut i: usize = 0;
+        // loop {
+        //     if i < (meta_data.superblock.inodes + 2) as usize {
+        //         // inode in inode_block.inodes.iter();
+        //         println!("Inode {:?}:", inode_block.inodes[i]);
+        //         println!("  size: {} bytes", inode_block.inodes[i].size);
+        //         i += 1;
+        //     } else {
+        //         break;
+        //     }
+        // }
+        for inode in inode_list.iter() {
+            //println!("Inode {:?}:", inode);
+            //println!("  size: {} bytes", inode.size);
         }
         println!("********* END INODE ***********\n");
 
     }
 
-    pub fn format(disk: &mut Disk<'a>) -> bool {
-        // STEP 1: set aside 10% of blocks for inodes
-        let total_inode_blocks = (disk.size() as f64 * 0.1).ceil() as usize;
-
-        // STEP 2: clear the inode table
-        for i in 1..total_inode_blocks + 1 {
-            disk.write(i, &mut [0; Disk::BLOCK_SIZE]);
-        }
-
-        // STEP 3: write the super block
-        let superblock = Block {
+    pub fn format(disk: &mut Disk<'a>) -> bool {   
+        // STEP 1: write the super block
+        let mut superblock = Block {
             superblock: Superblock {
                 magic_number: MAGIC_NUMBER as u32,
                 blocks: disk.size() as u32,
-                inode_blocks: total_inode_blocks as u32,
+                inode_blocks: 0,
+                current_block_index: 4,
+                free_lists: 0,
                 inodes: 0
             }
         };
-        disk.write(0, &mut superblock.data());
+        disk.write(0, superblock.data_as_mut());
+
+        let mut block = Block::new();
+        disk.write(1, block.data_as_mut());
+        disk.write(2, block.data_as_mut());
+        disk.write(3, block.data_as_mut());
 
         true
     }
 
     pub fn mount(&mut self, disk: &mut Disk<'a>) -> bool {
         let meta_data = Self::read_meta_data(disk);
-        let meta_data2 = Self::read_meta_data(disk); // ...have no idea how to make a copy
-        // println!("metaData: {:?}", metaData.inodeTable);
-        // println!("metaData2: {:?}", metaData.superBlock);
 
         if meta_data.superblock.magic_number != MAGIC_NUMBER as u32 {
             return false
         }
 
-        self.meta_data = Some(meta_data2);
+        let disc = disk.clone();
 
-        let nBlocks = meta_data.superblock.blocks;
-        let inodeBlocks = meta_data.superblock.inode_blocks;
+        self.meta_data = Some(meta_data);
+        self.disk = Some(disc);
 
-        let mut inode_bit_map = Vec::new();
-        let mut data_bit_map = Vec::new();
-
-        // fill the data bit map to unused by default
-        for _i in 0..nBlocks - inodeBlocks - 1 {
-            data_bit_map.push(false);
-        }
-
-        for inodes in meta_data.inode_table.iter() {
-            for inode in inodes.iter() {
-                if inode.valid == 1u32 {
-                    inode_bit_map.push(true);
-
-                    // next, follow the direct blocks to see what data blocks it has
-                    for direct_ptr in inode.direct.iter() {
-                        if *direct_ptr != 0u32 {
-                            data_bit_map[(*direct_ptr - inodeBlocks - 1) as usize] = true
-                        }
-                    }
-
-                    // also, does this inode has indirect block?
-                    if inode.single_indirect != 0u32 { // if so, read the block and scan
-                        let mut tmp_block = Block::new();
-                        let mut tmp_data = tmp_block.data();
-                        disk.read(inode.single_indirect as usize, &mut tmp_data);
-                        tmp_block.set_data(tmp_data);
-
-                        // interpret tmp_block as pointers, then scan
-                        let indirect_ptr_blocks = tmp_block.pointers();
-                        for ptr in indirect_ptr_blocks.iter() {
-                            if *ptr != 0u32 {
-                                data_bit_map[(*ptr - inodeBlocks - 1) as usize] = true
-                            }
-                        }
-                    }
-                } else {
-                    inode_bit_map.push(false);
-                }
-            }
-        }
-
-        // println!("inode BIT MAP: {:?}", inode_bit_map);
-        // println!("data BIT MAP: {:?}", data_bit_map);
-
-        self.inode_bitmap = Some(inode_bit_map);
-        self.data_bitmap = Some(data_bit_map);
-        self.disk = Some(disk.clone());
+        // let inode_list = InodeList::new(self.meta_data.as_mut(), disk.clone());
         true
     }
 
-    pub fn create(&mut self) -> usize {
-        // locate free inode in inode table
-        match &mut self.inode_bitmap {
-            Some(i_bitmap) => {
-                let mut inumber = 0;
-                for bit_map in i_bitmap.iter() {
-                    if *bit_map == false {
-                        i_bitmap[inumber] = true;
-                        let mut inode = Inode::blank();
-                        if self.load_inode(inumber, &mut inode) {
-                            inode.valid = 1;
-                            self.save_inode(inumber, &mut inode);
+    pub fn create(&mut self) -> i64 {
+        let fs_raw_ptr = self as *mut Self;
 
-                            match &mut self.meta_data {
-                                Some(meta_data) => {
-                                    meta_data.superblock.inodes += 1;
-                                    self.save_super_block();
-                                },
-                                _ => {}
-                            }
-
-                            return inumber
-                        }
-                        return 0
-                    }
-                    inumber += 1;
+        let meta_dat =  unsafe {
+            match &mut (*fs_raw_ptr).meta_data {
+                Some(meta_data) => meta_data,
+                _ => {
+                    return -1;
                 }
-                inumber
-            },
-            None => 0
+            }
+        };
+
+        let disc = match &self.disk {
+            Some(disk) => disk,
+            _ => {
+                return -1;
+            }
+        };
+        let mut disk = disc.clone();
+
+
+        // create the inode
+        let inode = Inode::blank();
+        let mut inode_list = InodeList::new(meta_dat, disk);
+
+        
+        if inode_list.inodeblock_isfull() {
+            let new_blk = self.allocate_free_block(0);
+            if !inode_list.add_inodeblock(new_blk) {
+                return -1;
+            }
         }
+        
+        
+        let inumber = inode_list.add(inode);
+        self.save_meta_data("all");
+        inumber
     }
 
     pub fn remove(&mut self, inumber: usize) -> bool {
@@ -221,51 +173,7 @@ impl<'a> FileSystem<'a> {
         let mut inode = Inode::blank();
         let inode_loaded = self.load_inode(inumber, &mut inode);
 
-        let inode_loaded = match &mut self.meta_data {
-            Some(_meta_data) => {
-                match &mut self.disk {
-                    Some(_disk) => {
-                        if inode_loaded {
-                            inode.direct = [0; POINTERS_PER_INODE]; // free direct blocks
-                            inode.single_indirect = 0;   // free indirect blocks
-                            inode.valid = 0;     // set inode to invalid
-                            true
-                        } else {
-                            false
-                        }
-                    },
-                    _ => false
-                }
-            },
-            None => false
-        };
-
-        if inode_loaded {
-            // save inode
-            self.save_inode(inumber, &mut inode);
-
-            match &mut self.meta_data {
-                Some(meta_data) => {
-                    meta_data.superblock.inodes -= 1;
-                    self.save_super_block();
-                },
-                _ => {}
-            }
-
-            // clear inode in inode table
-            match &mut self.inode_bitmap {
-                Some(ibitMap)=> {
-                    ibitMap[inumber] = false;
-                    self.save_inode_table();
-                },
-                _ => {}
-            };
-
-            true
-        } else {
-            true
-        }
-
+        true
     }
 
    pub fn stat(&mut self, inumber: usize) -> i64 {
@@ -338,18 +246,11 @@ impl<'a> FileSystem<'a> {
             length = length - (total_length - inode.size as usize);
         }
 
-        // compute initial block and offset index
-        let block_index = (offset as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
-        // let block_offset = offset % Disk::BLOCK_SIZE;
-
         let (block_n, block_offset) = self.get_block_num(inumber, offset);
-        if block_n > 0 {
+        if block_n < 0 {
             return -1;
         }
 
-        let mut block = Block::new();
-        let mut has_indirect_blk = false;
-        let mut indirect_blks: [u32; POINTERS_PER_BLOCK] = [0; POINTERS_PER_BLOCK];
         let mut bytes_read = 0;
         let mut j = 0;
         loop {
@@ -369,7 +270,7 @@ impl<'a> FileSystem<'a> {
             }
  
             j += 1;
-            println!("BYTES INDEX: {}, {}", block_index, block_offset);
+            println!("BYTES NUM: {}, {}", block_n, block_offset);
         }        
     }
 
@@ -412,147 +313,147 @@ impl<'a> FileSystem<'a> {
             return -1;
         }
 
-        let disc = match &mut self.disk {
-            Some(d) => d,
-            _ => { return -1; }
-         };
-         let mut disk = disc.clone();
+        // let disc = match &mut self.disk {
+        //     Some(d) => d,
+        //     _ => { return -1; }
+        //  };
+        //  let mut disk = disc.clone();
 
-        // locate the last block in this inode
-        let mut bytes_writen = 0;
-        let block_index = (inode.size as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
-        let mut block_offset: usize = (inode.size as usize % Disk::BLOCK_SIZE) as usize;
-        let mut block_num: usize;
-        if block_index < POINTERS_PER_INODE {
-            if inode.direct[block_index] > 0 {
-                block_num = inode.direct[block_index] as usize;
-            } else {
-                let blk = self.allocate_free_block(inumber);
-                if blk == -1 {
-                    return -1;
-                }
-                inode.direct[block_index] = blk as u32;
-                block_num = blk as usize;
-            }
-        } else {
-            // make sure an indirect block has been allocated
-            if inode.single_indirect == 0 {
-                let blk = self.allocate_free_block(inumber);
-                if blk == -1 {
-                    return -1;
-                }
-                inode.single_indirect = blk as u32;
-                self.save_inode(inumber, &mut inode);
-                disk.write(blk as usize, &mut [0; Disk::BLOCK_SIZE]);
-            }
+        // // locate the last block in this inode
+        // let mut bytes_writen = 0;
+        // let block_index = (inode.size as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
+        // let mut block_offset: usize = (inode.size as usize % Disk::BLOCK_SIZE) as usize;
+        // let mut block_num: usize;
+        // if block_index < POINTERS_PER_INODE {
+        //     if inode.direct[block_index] > 0 {
+        //         block_num = inode.direct[block_index] as usize;
+        //     } else {
+        //         let blk = self.allocate_free_block(inumber);
+        //         if blk == -1 {
+        //             return -1;
+        //         }
+        //         inode.direct[block_index] = blk as u32;
+        //         block_num = blk as usize;
+        //     }
+        // } else {
+        //     // make sure an indirect block has been allocated
+        //     if inode.single_indirect == 0 {
+        //         let blk = self.allocate_free_block(inumber);
+        //         if blk == -1 {
+        //             return -1;
+        //         }
+        //         inode.single_indirect = blk as u32;
+        //         self.save_inode(inumber, &mut inode);
+        //         disk.write(blk as usize, &mut [0; Disk::BLOCK_SIZE]);
+        //     }
 
-            let mut block = Block::new();
-            let mut blk_d = block.data();
+        //     let mut block = Block::new();
+        //     let mut blk_d = block.data();
 
 
-            disk.read(inode.single_indirect as usize, &mut blk_d);
-            block.set_data(blk_d);
-            let mut ptrs = block.pointers();
+        //     disk.read(inode.single_indirect as usize, &mut blk_d);
+        //     block.set_data(blk_d);
+        //     let mut ptrs = block.pointers();
 
-            if ptrs[block_index - POINTERS_PER_INODE] > 0 {
-               block_num = ptrs[block_index - POINTERS_PER_INODE] as usize;
-            } else {
-                let blk = self.allocate_free_block(inumber);
-                if blk == -1 {
-                    return -1;
-                }
-                ptrs[block_index - POINTERS_PER_INODE] = blk as u32;
-                block_num = blk as usize
-            }
-        }
+        //     if ptrs[block_index - POINTERS_PER_INODE] > 0 {
+        //        block_num = ptrs[block_index - POINTERS_PER_INODE] as usize;
+        //     } else {
+        //         let blk = self.allocate_free_block(inumber);
+        //         if blk == -1 {
+        //             return -1;
+        //         }
+        //         ptrs[block_index - POINTERS_PER_INODE] = blk as u32;
+        //         block_num = blk as usize
+        //     }
+        // }
 
-        // write block and copy to inode data
-        loop {
-            if bytes_writen < length && (offset + bytes_writen) < data.len() {
-                let bytes_wr = self.write_to_block(block_num, block_offset, data, length - bytes_writen, offset + bytes_writen);
-                println!("bytes_writen: {}", bytes_wr);
-                if bytes_wr == 0 {
-                    // allocate more blocks for data
-                    let blk = self.allocate_free_block(inumber);
-                    if blk == -1 {
-                        return -1;
-                    }
-                    block_num = blk as usize;
-                    block_offset = 0;
-                } else if bytes_wr == -1 {
-                    return -1;  // something bad happened
-                } else {
-                    bytes_writen += bytes_wr as usize;
-                    inode.size += bytes_wr as u32;
-                    block_offset = (inode.size as usize % Disk::BLOCK_SIZE) as usize;
-                }
-            } else {
-                self.save_inode(inumber, &mut inode);
-                println!("Total bytes writen: {}", bytes_writen);
-                return bytes_writen as i64;
-            }
-        }
+        // // write block and copy to inode data
+        // loop {
+        //     if bytes_writen < length && (offset + bytes_writen) < data.len() {
+        //         let bytes_wr = self.write_to_block(block_num, block_offset, data, length - bytes_writen, offset + bytes_writen);
+        //         println!("bytes_writen: {}", bytes_wr);
+        //         if bytes_wr == 0 {
+        //             // allocate more blocks for data
+        //             let blk = self.allocate_free_block(inumber);
+        //             if blk == -1 {
+        //                 return -1;
+        //             }
+        //             block_num = blk as usize;
+        //             block_offset = 0;
+        //         } else if bytes_wr == -1 {
+        //             return -1;  // something bad happened
+        //         } else {
+        //             bytes_writen += bytes_wr as usize;
+        //             inode.size += bytes_wr as u32;
+        //             block_offset = (inode.size as usize % Disk::BLOCK_SIZE) as usize;
+        //         }
+        //     } else {
+        //         self.save_inode(inumber, &mut inode);
+        //         println!("Total bytes writen: {}", bytes_writen);
+        //         return bytes_writen as i64;
+        //     }
+        // }
+        -1
     }
 
     // ****************** helper methods and functions *******************
 
     fn read_meta_data(disk: &mut Disk<'a>) -> MetaData {
         // read the super block
-        let mut block = Block::new();
-        let mut d = block.data();
-        disk.read(0, &mut d);
-        block.set_data(d);
+        let mut block = Self::fetch_block(disk, 0);
         let superblock = block.superblock();
         
         // read inode blocks ====> read the inode table
-        let mut inode_table = Vec::new();
-        for i in 0..superblock.inode_blocks {
-            let mut d = block.data();
-            disk.read(1 + i as usize, &mut d);
-            block.set_data(d);
-            inode_table.push(block.inodes());
-        }
+        let irb = Self::fetch_block(disk, 1);
+        let rfl = Self::fetch_block(disk, 2);
+        let ifl = Self::fetch_block(disk, 3);
 
         MetaData {
             superblock,
-            inode_table
+            inodes_root_block: irb,
+            root_free_list: rfl,
+            inodes_free_list: ifl
         }
     }
 
-    fn save_super_block(&mut self) -> bool {
+    fn save_meta_data(&mut self, name: &str) -> bool {
         match &mut self.meta_data {
             Some(meta_data) => {
                 match &mut self.disk {
                     Some(disk) => {
                         let mut block = Block::new();
-                        block.set_superblock(meta_data.superblock);
-                        disk.write(0, &mut block.data());
+                        match name {
+                            "superblock" => {
+                                block.set_superblock(meta_data.superblock);
+                                disk.write(0, block.data_as_mut());
+                                true
+                            },
+                            "irb" => {
+                                disk.write(1, meta_data.inodes_root_block.data_as_mut());
+                                true
+                            },
 
-                        true
-                    },
-                    _ => false
-                }
-            },
-            None => false
-        }
-    }
+                            "rfl" => {
+                                disk.write(2, meta_data.root_free_list.data_as_mut());
+                                true
+                            },
+                            "ifl" => {
+                                disk.write(3, meta_data.inodes_free_list.data_as_mut());
+                                true
+                            },
+                            "all" => {
+                                block.set_superblock(meta_data.superblock);
+                                disk.write(0, block.data_as_mut());
 
-    fn save_inode_table(&mut self) -> bool {
-        match &mut self.meta_data {
-            Some(meta_data) => {
-                match &mut self.disk {
-                    Some(disk) => {
-                        let mut block = Block::new();
-
-                        // write in memory inodeTable to disk
-                        let mut i = 1;
-                        for inode_blk in meta_data.inode_table.iter() {
-                            block.set_inodes(*inode_blk);
-                            disk.write(i, &mut block.data());
-                            i += 1;
+                                disk.write(1, meta_data.inodes_root_block.data_as_mut());
+                                disk.write(2, meta_data.root_free_list.data_as_mut());
+                                disk.write(3, meta_data.inodes_free_list.data_as_mut());
+                                true
+                            },
+                            _ => {
+                                false
+                            }
                         }
-
-                        true
                     },
                     _ => false
                 }
@@ -560,6 +461,32 @@ impl<'a> FileSystem<'a> {
             None => false
         }
     }
+
+
+    fn fetch_block(disk: &mut Disk, block_num: usize) -> Block {
+        let mut block = Block::new();
+        disk.read(block_num, block.data_as_mut());
+        return block;
+    }
+
+    fn get_block(&mut self, block_num: usize) -> Block {
+        match &mut self.disk {
+            Some(disk) => {
+                return Self::fetch_block(disk, block_num);
+            },
+            _ => {
+                return Block::new();
+            }
+        }
+    }
+
+    fn add_inode(&mut self, inode: Inode) -> i64 {
+        // create inode block and write it to disk
+        // let inodeBlock = InodeBlock::as_block();
+        // disk.write(blk as usize, &mut inodeBlock.data());
+        -1
+    }
+
 
     fn load_inode(&mut self, inumber: usize, inode: &mut Inode) -> bool {
         let mut blk = ((inumber / INODES_PER_BLOCK) as f64).ceil() as usize;
@@ -580,13 +507,6 @@ impl<'a> FileSystem<'a> {
             }
         };
 
-        // interpret block as inodes and load into inode
-        let inodes = block.inodes();
-        let inode_r = inodes[inumber % INODES_PER_BLOCK];
-        inode.valid = inode_r.valid;
-        inode.size = inode_r.size;
-        inode.direct = inode_r.direct;
-        inode.single_indirect = inode_r.single_indirect;
         true
     }
 
@@ -602,199 +522,189 @@ impl<'a> FileSystem<'a> {
         // read the block
         let mut block = Block::new();
         let mut data = block.data();
-        match &mut self.disk {
-            Some(disk) => {
-                disk.read(blk, &mut data);
-                block.set_data(data);
-
-                // interpret block as inodes and set inodes field
-                let mut inodes = block.inodes();
-
-                inodes[row_blk] = *inode;
-                block.set_inodes(inodes);
-                disk.write(blk, &mut block.data());
-
-                // update in memory inodeTable
-                match &mut self.meta_data {
-                    Some(meta_data) => {
-                        if meta_data.inode_table.len() < blk { // add inodes for block blk
-                            println!(" I don't think this section will ever execute");
-                            meta_data.inode_table.push(block.inodes());
-                        } else {
-                            meta_data.inode_table[blk - 1][row_blk] = *inode;
-                        }
-                    },
-                    _ => {}
-                };
-            },
-            _ => {
-                return false
-            }
-        };
 
         true
     }
 
     fn allocate_free_block(&mut self, inumber: usize) -> i64 {
-        // load inode
-        let mut inode = Inode::blank();
-        if !self.load_inode(inumber, &mut inode) {
-            return -1;
-        }
+        // NOTE: this method does not need an inumber parameter
+        let meta_data = match &mut self.meta_data {
+            Some(meta_data) => meta_data,
+            _ => { return -1; }
+        };
 
         let disk = match &mut self.disk {
-            Some(disk) => {
-                disk
-            },
+            Some(disk) => disk,
             _ => {
                 return -1;
             }
         };
 
-        let get_free_block = |data_bitmap: Option<&Vec<bool>>| {
-            match data_bitmap {
-                Some(data_bitmap) => {
-                    // println!("DATABITMAP: {:?}", dataBitMap);
-                    let mut i = 0;
-                    loop {
-                        if i < data_bitmap.len() {
-                            if !data_bitmap[i] {
-                                break (i + 1) as i64;
-                            }
-                        } else {
-                            break -1;
-                        }
-                        i += 1;
-                    }
-                },
-                _ => -1
+        if meta_data.superblock.free_lists == 0 {
+            // allocate from current_block_index
+            let free_blk = meta_data.superblock.current_block_index;
+            if free_blk < meta_data.superblock.blocks {
+                meta_data.superblock.current_block_index += 1;
+                self.save_meta_data("superblock");   // save meta_data to disk here
+                // println!("Current Block: {}", free_blk);
+                return free_blk as i64;
             }
-        };
+        } else {
+            // read the head of the free_list
+            let i = meta_data.superblock.free_lists as usize % (POINTERS_PER_BLOCK - 1);
+            let mut free_block = meta_data.root_free_list.pointers();
+            let free_blk = free_block[i];
+            free_block[i] = 0;
+            meta_data.root_free_list.set_pointers(free_block);
+            meta_data.superblock.free_lists = meta_data.superblock.free_lists - 1;
 
-    
-        let free_block = get_free_block(self.data_bitmap.as_ref());
+            if i == 0 {
+                // change the root free list here
+                println!("changing root list here..");
+                let next_ptr = free_block[POINTERS_PER_BLOCK - 1];
+                let mut block = Self::fetch_block(disk, next_ptr as usize);
+                meta_data.root_free_list = block;
 
-        if free_block > -1 {
-            match &mut self.data_bitmap {
-                Some(data_bitmap) => {
-                    data_bitmap[free_block as usize - 1] = true;
-                },
-                _ => { return -1; }
+                // free next_ptr block
+                self.add_free_block(next_ptr);
             }
 
-            match &mut self.meta_data {
-                Some(meta_data) => {
-                    let offset = meta_data.superblock.inode_blocks;
-                    let free_block = free_block + offset as i64;
-                    // compute the inode number this free block belongs to
-                    let mut i = 0;
-                    loop {
-                        if i == POINTERS_PER_INODE {
-                            break;
-                        }
-                        if inode.direct[i] == 0 {
-                            inode.direct[i] = free_block as u32;
-                            self.save_inode(inumber, &mut inode);
-                            return free_block;
-                        }
-                        i += 1;
-                    }
-
-                    if inode.single_indirect == 0 {
-                        // allocate new indirect block for more storage
-                        let free_indirect = get_free_block(self.data_bitmap.as_ref());
-                        if free_indirect < 0 {
-                            return -1;
-                        }
-                        inode.single_indirect = free_indirect as u32;
-                        // self.save_inode(inumber, &mut inode);
-                    }
-
-                    let mut block = Block::new();
-                    let mut block_data = block.data();
-                    disk.read(inode.single_indirect as usize, &mut block_data);
-                    block.set_data(block_data);
-                    let mut indirect_pointers = block.pointers();
-
-                    let mut i = 0;
-                    loop {
-                        if i == POINTERS_PER_BLOCK {
-                            break;
-                        }
-
-                        if indirect_pointers[i] == 0 {
-                            indirect_pointers[i] = free_block as u32;
-                            block.set_pointers(indirect_pointers);
-                            disk.write(inode.single_indirect as usize, &mut block.data());
-                            self.save_inode(inumber, &mut inode);
-                            return free_block;
-                        }
-                        i += 1;
-                    }
-                    return -1;
-                },
-                _ => {}
-            }
+            // remember to save meta_data here
+            self.save_meta_data("all");
+            return free_blk as i64;
         }
-
         -1
     }
 
+    pub fn add_free_block(&mut self, block: u32) {
+        // function to add to the free list
+    }
+
     fn get_block_num(&mut self, inumber: usize, offset: usize) -> (i64, usize) {
-        // load inode info
-        let mut inode = Inode::blank();
-        if !self.load_inode(inumber, &mut inode) {
-            return (-1, 0);
+        (-1, 0)
+    }
+
+    // fn get_block_num(&mut self, inumber: usize, offset: usize) -> (i64, usize) {
+    //     // load inode info
+    //     let mut inode = Inode::blank();
+    //     if !self.load_inode(inumber, &mut inode) {
+    //         return (-1, 0);
+    //     }
+
+    //     // compute initial block and offset index
+    //     let block_index = (offset as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
+    //     let block_offset = offset % Disk::BLOCK_SIZE;
+
+
+    //     let get_blks = |disk: Option<&mut Disk>, ptr: u32| {
+    //         let mut block = Block::new();
+    //         match disk {
+    //             Some(mut disc) => {
+    //                 let mut blk_d = block.data();
+    //                 disc.read(ptr as usize, &mut blk_d);
+    //                 block.set_data(blk_d);
+    //                 return block.pointers();
+    //             },
+    //             _ => { return block.pointers(); }
+    //         }
+    //     };
+
+    //     if block_index < POINTERS_PER_INODE {
+    //         if inode.direct[block_index] > 0 {
+    //             // use the block number for reading
+    //             return (inode.direct[block_index] as i64, block_offset)
+    //         } else {
+    //             return (-1, block_offset);
+    //         }
+
+    //     } else if block_index < POINTERS_PER_INODE + POINTERS_PER_BLOCK {
+    //         let mut indirect_blks = get_blks(self.disk.as_mut(), inode.single_indirect);
+
+    //         // use block index to get block number from indirect pointer
+    //         let indirect_blk_index = block_index - POINTERS_PER_INODE;
+    //         if indirect_blks[indirect_blk_index] > 0 {
+    //             return (indirect_blks[indirect_blk_index] as i64, block_offset);
+    //         } else {
+    //             return (-1, block_offset);
+    //         }
+    //     } else if block_index < POINTERS_PER_INODE +  POINTERS_PER_BLOCK.pow(2) {
+    //         let double_indirect_blks = get_blks(self.disk.as_mut(), inode.double_indirect);
+    //         let i = (block_index as f64 / POINTERS_PER_BLOCK as f64).floor() as usize;
+    //         if double_indirect_blks[i] > 0 {
+    //             let double_indirect_blks = get_blks(self.disk.as_mut(), double_indirect_blks[i]);
+    //             let j = block_index - (POINTERS_PER_INODE + POINTERS_PER_BLOCK);
+    //             if double_indirect_blks[j] > 0 {
+    //                 return (double_indirect_blks[j] as i64, block_offset);
+    //             }
+    //         }
+    //         return (-1, block_offset);
+
+    //     } else if block_index < POINTERS_PER_INODE + POINTERS_PER_BLOCK.pow(3) {
+    //         let triple_indirect_blks = get_blks(self.disk.as_mut(), inode.triple_indirect);
+    //         let i = (block_index as f64 / POINTERS_PER_BLOCK as f64).floor() as usize;
+    //         if triple_indirect_blks[i] > 0 {
+    //             let triple_indirect_blks = get_blks(self.disk.as_mut(), triple_indirect_blks[i]);
+    //             let j = (block_index as f64 / POINTERS_PER_BLOCK.pow(2) as f64).floor() as usize;
+    //             if triple_indirect_blks[j] > 0 {
+    //                 let triple_indirect_blks = get_blks(self.disk.as_mut(), triple_indirect_blks[j]);
+    //                 let k = block_index - (POINTERS_PER_INODE + POINTERS_PER_BLOCK.pow(2));
+    //                 if triple_indirect_blks[k] > 0 {
+    //                     return (triple_indirect_blks[k] as i64, block_offset);
+    //                 }
+    //             }
+    //         }
+    //         return (-1, block_offset);
+    //     } else {
+    //         return (-1, 0);
+    //     }
+    // }
+
+    fn get_data_blk_num(i: usize, inode: &Inode, disk: &mut Disk) -> i64 {
+        let root_block = Self::fetch_block(disk, inode.data_block as usize);
+        match inode.blk_pointer_level {
+            1 => {
+                // let block = Self::fetch_block(disk, inode.blk_data);
+                let blk_num = root_block.pointers()[i % POINTERS_PER_BLOCK] as i64;
+                if blk_num > 0 {
+                    return blk_num;
+                }
+                -1
+            },
+            2 => {
+                let j = (i as f64 / POINTERS_PER_BLOCK as f64).floor() as usize;
+                if root_block.pointers()[j] > 0 {
+                    let block = Self::fetch_block(disk, root_block.pointers()[j] as usize);
+                    let blk_num = block.pointers()[i % POINTERS_PER_BLOCK];
+                    if blk_num > 0 {
+                        return blk_num as i64;
+                    }
+                }
+                -1
+            },
+            3 => {
+                let j = (i as f64 / POINTERS_PER_BLOCK as f64).floor() as usize;
+                if root_block.pointers()[j] > 0 {
+                    let block = Self::fetch_block(disk, root_block.pointers()[j] as usize);
+                    let blk_num = block.pointers()[i % POINTERS_PER_BLOCK];
+                    if blk_num > 0 {
+                        let block = Self::fetch_block(disk, blk_num as usize);
+                        let blk_num = block.pointers()[i % POINTERS_PER_BLOCK];
+                        if blk_num > 0 {
+                            return blk_num as i64;
+                        }
+                    }
+                }
+                -1
+            },
+            _ => -1
         }
+    }
 
-        // compute initial block and offset index
-        let block_index = (offset as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
-        let block_offset = offset % Disk::BLOCK_SIZE;
-
-        // let mut indirect_blks: [u32; POINTERS_PER_BLOCK] = [0; POINTERS_PER_BLOCK];
-        // let mut double_indirect_blks: [u32; POINTERS_PER_BLOCK] = [0; POINTERS_PER_BLOCK];
-        // let mut triple_indirect_blks: [u32; POINTERS_PER_BLOCK] = [0; POINTERS_PER_BLOCK];
-
-
-        let get_blks = |disk: Option<&mut Disk>, ptr: u32| {
-            let mut block = Block::new();
-            match disk {
-                Some(mut disc) => {
-                    let mut blk_d = block.data();
-                    disc.read(ptr as usize, &mut blk_d);
-                    block.set_data(blk_d);
-                    return block.pointers();
-                },
-                _ => { return block.pointers(); }
-            }
-        };
-
-        if block_index < POINTERS_PER_INODE {
-            if inode.direct[block_index] > 0 {
-                // use the block number for reading
-                return (inode.direct[block_index] as i64, block_offset)
-            } else {
-                return (-1, block_offset);
-            }
-
-        } else if block_index < POINTERS_PER_INODE + POINTERS_PER_BLOCK {
-            let mut indirect_blks = get_blks(self.disk.as_mut(), inode.single_indirect);
-
-            // use block index to get block number from indirect pointer
-            let indirect_blk_index = block_index - POINTERS_PER_INODE;
-            if indirect_blks[indirect_blk_index] > 0 {
-                return (indirect_blks[indirect_blk_index] as i64, block_offset);
-            } else {
-                return (-1, block_offset);
-            }
-        } else if block_index < POINTERS_PER_INODE +  POINTERS_PER_BLOCK.pow(2) {
-            return (-1, block_offset);
-
-        } else if block_index < POINTERS_PER_INODE + POINTERS_PER_BLOCK.pow(3) {
-            return (-1, block_offset);
-        } else {
-            return (-1, 0);
-        }
+    fn compute_blk_index(byte_offset: usize) -> (i64, usize) {
+        // compute block and offset index
+        let block_index = (byte_offset as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
+        let block_offset = byte_offset % Disk::BLOCK_SIZE;
+        (block_index as i64, block_offset as usize)
     }
 }
 
@@ -835,19 +745,37 @@ mod tests {
         assert_eq!(fs.mount(&mut disk), true);
     }
 
-    // #[test]
+    #[test]
     fn test_create_remove_inode() {
-        let mut disk = Disk::from_file("./data/image.100", 100);
+        const number_of_blocks: usize = 120;
+        const k: usize = INODES_PER_BLOCK - 1;
+        const blks: usize = number_of_blocks - 3; // remove sb, rfl, and 
+
+        let mut disk = Disk::from_file("./data/image.tfs", number_of_blocks);
         let mut fs = FileSystem::from_disk(&mut disk);
-        let inode1 = fs.create();
-        let inode2 = fs.create();
-        let inode3 = fs.create();
-        let inode4 = fs.create();
+    
+        const size: usize = k * blks;
+        let mut inodes = [0; size];
+        let mut i = 0;
+        loop {
+            if i == size {
+                break;
+            }
+            inodes[i] = fs.create();
+            i += 1;
+        }
         fs.info();
+        //println!("INODES: {:?}", inodes);
+        // fs.remove(inode2);
+        // fs.info()
+        
 
-        fs.remove(inode2);
-
-        fs.info()
+        match fs.meta_data {
+            Some(meta_data) => {
+                assert_eq!(meta_data.superblock.inodes as u32, (k * blks) as u32);
+            },
+            None => {}
+        }
     }
 
     fn to_mut_data (txt: &str) -> [u8; 4096] {
@@ -861,7 +789,7 @@ mod tests {
         d
     }
 
-    #[test]
+    // #[test]
     fn test_fs_read_write() {
         let mut disk = Disk::from_file("./data/image.100", 100);
         let mut fs = FileSystem::from_disk(&mut disk);
@@ -870,11 +798,11 @@ mod tests {
         let mut data_r = [0; 4096];
         let mut i = 0;
         
-        let b1 = fs.write(inode1, &mut data, 33, 0);
+        let b1 = fs.write(inode1 as usize, &mut data, 33, 0);
         FileSystem::debug(&mut disk);
         fs.info();
 
-        let b2 = fs.read(inode1, &mut data_r, 33, 0);
+        let b2 = fs.read(inode1 as usize, &mut data_r, 33, 0);
 
         let str1 = std::str::from_utf8(&data_r).unwrap().to_string();
         let str2 = std::str::from_utf8(&data).unwrap().to_string();
