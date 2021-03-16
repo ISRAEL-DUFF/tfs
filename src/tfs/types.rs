@@ -274,6 +274,14 @@ impl<'c> InodeProxy<'c> {
     pub fn incr_data_blocks(&mut self, amount: usize) {
         let (i, j) = self.get_index();
         self.inode_table[i].1.inodes[j].total_data_blocks += amount as u32;
+        let data_blocks = self.inode_table[i].1.inodes[j].total_data_blocks;
+
+        if data_blocks as usize == POINTERS_PER_BLOCK || 
+          data_blocks as usize == POINTERS_PER_BLOCK.pow(2) || 
+          data_blocks as usize == POINTERS_PER_BLOCK.pow(3) {
+            self.inode_table[i].1.inodes[j].blk_pointer_level += 1;
+            println!("*******Increased pointer level******")
+        }
     }
 
     pub fn save(&mut self) -> bool {
@@ -289,6 +297,7 @@ impl<'c> InodeProxy<'c> {
 
 
     pub fn save_data_blocks(&mut self, data_blocks: &Vec<u32>) {
+        // println!("Pointer Data Block: {}, level: {}, {}", self.data_block(), self.pointer_level(), data_blocks.len());
         let root_block = fetch_block(&mut self.disk.clone(), self.data_block() as usize);
         match self.pointer_level() {
             1 => {
@@ -296,7 +305,6 @@ impl<'c> InodeProxy<'c> {
                 let mut i = 0;
                 let mut direct_pointers = Block::new();
                 for j in 0..root_block.pointers().len() {
-                    println!("yyyyyy: {}", j);
                     if i < data_blocks.len() && data_blocks[i] > 0 {
                         direct_pointers.pointers_as_mut()[j as usize] = data_blocks[i];
                         i += 1;
@@ -544,10 +552,48 @@ impl<'a> InodeWriteIter<'a> {
         }
     }
 
-    pub fn write_block(&mut self, block_data: &mut [u8]) -> bool {
+    // the align_to_block() method is used to align the write position to the beginning of a new block
+    // this enables the use of write_block() method.
+    pub fn align_to_block(&mut self, block_data: &mut [u8]) -> (bool, i64) {
+        let n = Disk::BLOCK_SIZE - self.next_write_index;
+        println!("LENGTH: {}, {}",block_data.len(), self.next_write_index);
+        if block_data.len() < n {
+            return (false, -1)
+        }
+
+        // if self.data_blocks.len() == 0 {
+        //     return (false, 0)
+        // }
+
+        if self.get_inode().size() == 0 || self.next_write_index == 0 || self.next_write_index == Disk::BLOCK_SIZE {
+            return (true, 0)
+        }
+
+        let mut m = 0;
+        loop {
+            let (success, _) = self.write_byte(block_data[m]);
+            if !success {
+                break
+            }
+            m += 1;
+        }
+        (true, m as i64)
+    }
+
+    pub fn write_block(&mut self, block_num: i64, block_data: &mut [u8]) -> bool {
+        println!("WRITE BLOCK TO: {}", block_num);
         if block_data.len() < Disk::BLOCK_SIZE {
             return false
         }
+
+        if !self.add_data_blk(block_num) {
+            return false
+        }
+        self.disk.write(block_num as usize, block_data);
+
+        let mut inode = self.get_inode();
+        inode.incr_size(Disk::BLOCK_SIZE);
+        inode.save();
         true
     }
 
@@ -574,8 +620,8 @@ impl<'a> InodeWriteIter<'a> {
             unsafe {
                 let mut inode = (*this).get_inode();
                 (*this).data_blocks.push(new_blk as u32);
-                inode.save_data_blocks(&self.data_blocks);
                 inode.incr_data_blocks(1);
+                inode.save_data_blocks(&self.data_blocks);
                 inode.save();
                 self.data_block_num = new_blk as u32;
                 self.next_write_index = 0;
@@ -748,8 +794,8 @@ impl<'a> InodeList<'a> {
             self.fs_meta_data.superblock.inodes += 1;
             self.set_inode(inumber, inode);
             self.save_inode(inumber);
-                self.inode_index, inumber, self.fs_meta_data.superblock.inodes, 
-                self.fs_meta_data.inodes_root_block.inode_block().inodes[0]);
+                // self.inode_index, inumber, self.fs_meta_data.superblock.inodes, 
+                // self.fs_meta_data.inodes_root_block.inode_block().inodes[0]);
             inumber as i64
         }
     }

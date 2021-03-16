@@ -18,6 +18,8 @@ pub struct Disk<'a> {
 impl<'a> Disk<'a> {
     pub const BLOCK_SIZE: usize = 4096;  // number of bytes per block
     fn sanity_check(&self, blocknum: usize) {
+        // println!("BLOCK NUM: {}", blocknum.clone());
+
         if blocknum < 0 {
             panic!("Block Number is negative")
         }
