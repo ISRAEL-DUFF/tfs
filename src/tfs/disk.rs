@@ -17,9 +17,8 @@ pub struct Disk<'a> {
 
 impl<'a> Disk<'a> {
     pub const BLOCK_SIZE: usize = 4096;  // number of bytes per block
-    fn sanity_check(&self, blocknum: usize) {
-        // println!("BLOCK NUM: {}", blocknum.clone());
 
+    fn sanity_check(&self, blocknum: usize) {
         if blocknum < 0 {
             panic!("Block Number is negative")
         }
@@ -104,7 +103,7 @@ impl<'a> Disk<'a> {
 
         match self.file_descriptor.as_mut() {
             Some(file) => {
-                file.seek(SeekFrom::Start( blocknum as u64 * Self::BLOCK_SIZE as u64));
+                file.seek(SeekFrom::Start(blocknum as u64 * Self::BLOCK_SIZE as u64));
                 file.read(data);
                 self.reads = self.reads + 1;
             },

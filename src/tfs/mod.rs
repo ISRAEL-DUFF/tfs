@@ -251,21 +251,27 @@ impl<'a> FileSystem<'a> {
         let total_length = offset + length;
         let file_size = unsafe {(*i_list).get_inode(inumber).size()};
         if total_length > file_size as usize {
-            length = length - (total_length - file_size as usize);
+            // length = length - (total_length - file_size as usize);
+            // println!("offset: {}, file_size: {}", offset, file_size);
+            if offset > file_size as usize {
+                return 0
+            }
+            length = file_size as usize - offset as usize;
         }
 
         
         let mut i = 0;
         inode_iter.seek(offset);
-        for byte in inode_iter {
-            if i < length {
-                data[i] = byte;
-                i += 1;
-            } else {
-                break
-            }
-        }
-        return i as i64    
+        // for byte in inode_iter {
+        //     if i < length {
+        //         data[i] = byte;
+        //         i += 1;
+        //     } else {
+        //         break
+        //     }
+        // }
+        // return i as i64
+        return inode_iter.read_buffer(data, length)    
     }
 
     pub fn write(&mut self, inumber: usize, data: &mut [u8], length: usize, offset: usize) -> i64 {
@@ -338,39 +344,27 @@ impl<'a> FileSystem<'a> {
 
         let (aligned, n_bytes) = writer_iter.align_to_block(&mut data[offset..]);
         let mut bytes_writen = 0;
-        println!("First: {}, {}", aligned, n_bytes);
-        // if !aligned && n_bytes_writen == 0 {
-        //     unsafe {
-        //         writer_iter.add_data_blk((*fs_raw_ptr).allocate_free_block());
-        //     }
-        //     let (aligned, n_bytes) = writer_iter.align_to_block(&mut data[offset..]);
-        //     block_aligned = aligned;
-        //     n_bytes_writen = n_bytes;
-        // } else {
-        //     block_aligned = aligned;
-        //     n_bytes_writen = n_bytes;
-        // }
+        
         block_aligned = aligned;
         n_bytes_writen = n_bytes;
         if block_aligned {
-            println!("Aligned: {}, {}, {}", block_aligned, n_bytes_writen, length);
+            // println!("Aligned: {}, {}, {}", block_aligned, n_bytes_writen, length);
             let n_blocks = (length as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
             let mut i  = 0;
             let mut start = offset + n_bytes_writen as usize;
             let mut end = start + Disk::BLOCK_SIZE;
             bytes_writen += n_bytes_writen;
-            println!("start: {}, end: {}, calculated blocks: {}", start, end, n_blocks);
             loop {
                 if end > data.len() && (bytes_writen as usize) < length  {
                     end = data.len();
-                    println!("I did run 1");
+                    // println!("I did run 1");
                     bytes_writen += write_bytes(&mut data[start..end], fs_raw_ptr);
                     break
                 }
 
                 if end > length && (bytes_writen as usize) < length {
                     end = length;
-                    println!("I did run 2");
+                    // println!("I did run 2");
                     bytes_writen += write_bytes(&mut data[start..end], fs_raw_ptr);
                     break
                 }
@@ -394,30 +388,6 @@ impl<'a> FileSystem<'a> {
             return bytes_writen as i64;
         }
         -1
-
-        // let mut i = 0;
-        // loop {
-        //     if i + offset < length {
-        //         let r = writer_iter.write_byte(data[offset + i]);
-        //         if r.1 < 0 {
-        //             unsafe {
-        //                 let data_blk = (*fs_raw_ptr).allocate_free_block();
-        //                 writer_iter.add_data_blk(data_blk);
-        //                 continue;
-        //             }
-        //         }
-        //     } else {
-        //         break
-        //     }
-        //     i += 1;
-        // }
-        
-
-        // if writer_iter.flush() {
-        //     return i as i64
-        // } else {
-        //     -1
-        // }
     }
 
     // ****************** helper methods and functions *******************

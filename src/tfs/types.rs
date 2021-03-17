@@ -80,7 +80,7 @@ pub fn fetch_block(disk: &mut Disk, block_num: usize) -> Block {
 pub fn get_inode_block(inode_table: &Vec<(u32, InodeBlock)>, i: usize) -> (u32, Block) {
     let index = (i as f64 / (INODES_PER_BLOCK - 1) as f64).floor() as usize;
     let (block_num, inodeblock) = inode_table[index];
-    println!("GET INODE BLOCK: {}, {}", index, block_num);
+    // println!("GET INODE BLOCK: {}, {}", index, block_num);
     (block_num, inodeblock.as_block())
 }
 
@@ -89,7 +89,7 @@ pub fn set_inode(inode_table: &mut Vec<(u32, InodeBlock)>, inumber: usize, inode
     let (blk_n, mut block) = get_inode_block(inode_table, inumber);
     let i = inumber % (INODES_PER_BLOCK - 1);
     block.iblock_as_mut().inodes[i] = inode;
-    println!("SET INODE ==> Inumber: {}, inode: {:?}", inumber, inode);
+    // println!("SET INODE ==> Inumber: {}, inode: {:?}", inumber, inode);
     let index = (inumber as f64 / (INODES_PER_BLOCK - 1) as f64).floor() as usize;
     inode_table[index] = (blk_n, block.inode_block());
 }
@@ -280,7 +280,7 @@ impl<'c> InodeProxy<'c> {
           data_blocks as usize == POINTERS_PER_BLOCK.pow(2) || 
           data_blocks as usize == POINTERS_PER_BLOCK.pow(3) {
             self.inode_table[i].1.inodes[j].blk_pointer_level += 1;
-            println!("*******Increased pointer level******")
+            // println!("*******Increased pointer level******")
         }
     }
 
@@ -301,7 +301,7 @@ impl<'c> InodeProxy<'c> {
         let root_block = fetch_block(&mut self.disk.clone(), self.data_block() as usize);
         match self.pointer_level() {
             1 => {
-                println!("1st level");
+                // println!("1st level");
                 let mut i = 0;
                 let mut direct_pointers = Block::new();
                 for j in 0..root_block.pointers().len() {
@@ -318,7 +318,7 @@ impl<'c> InodeProxy<'c> {
             },
     
             2 => {
-                println!("2nd level");
+                // println!("2nd level");
                 let mut i = 0;
                 for ptr1 in root_block.pointers().iter() {
                     if *ptr1 > 0 {
@@ -531,7 +531,7 @@ impl<'a> InodeWriteIter<'a> {
         } else {
             // flush current block
             if !self.flush() {
-                println!("No flush");
+                // println!("No flush");
                 return (false, -1);
             };
 
@@ -556,14 +556,9 @@ impl<'a> InodeWriteIter<'a> {
     // this enables the use of write_block() method.
     pub fn align_to_block(&mut self, block_data: &mut [u8]) -> (bool, i64) {
         let n = Disk::BLOCK_SIZE - self.next_write_index;
-        println!("LENGTH: {}, {}",block_data.len(), self.next_write_index);
         if block_data.len() < n {
             return (false, -1)
         }
-
-        // if self.data_blocks.len() == 0 {
-        //     return (false, 0)
-        // }
 
         if self.get_inode().size() == 0 || self.next_write_index == 0 || self.next_write_index == Disk::BLOCK_SIZE {
             return (true, 0)
@@ -581,7 +576,9 @@ impl<'a> InodeWriteIter<'a> {
     }
 
     pub fn write_block(&mut self, block_num: i64, block_data: &mut [u8]) -> bool {
-        println!("WRITE BLOCK TO: {}", block_num);
+        if block_num < 0 {
+            return false
+        }
         if block_data.len() < Disk::BLOCK_SIZE {
             return false
         }
@@ -690,6 +687,77 @@ impl<'a> InodeReadIter<'a> {
         }
     }
 
+    pub fn align_to_block(&mut self, block_data: &mut [u8]) -> (bool, i64) {
+        let n = self.byte_offset % Disk::BLOCK_SIZE;
+        if n == 0 {
+            return (true, 0)
+        }
+
+        if block_data.len() < n {
+            return (false, -1)
+        }
+
+        let mut i = 0;
+        for byte in self {
+            block_data[i] = byte;
+            i += 1;
+            if i > n {
+                break
+            }
+        }
+        (true, i as i64)
+    }
+
+    pub fn read_buffer(&mut self, block_data: &mut [u8], length: usize) -> i64 {
+        let mut read_len = length; //block_data.len();
+        let (success, num_bytes) = self.align_to_block(&mut block_data[..]);
+        read_len -= num_bytes as usize;
+        let mut bytes_read = num_bytes;
+
+        let num_blocks = (read_len as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
+        let block_offset = (self.byte_offset as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
+
+        let mut i = 0;  // i = 0, 1, 2, 3, 4, ... num_blocks
+        let mut start = num_bytes as usize;
+        let mut end = start + Disk::BLOCK_SIZE;
+        loop {
+            if block_offset + i >= self.data_blocks.len() || i == num_blocks {
+                println!("This is me: {}, {}, {}, {}", num_blocks, block_offset, i, self.data_blocks.len());
+                break
+            }
+            let blk_num = self.data_blocks[block_offset + i];
+            if blk_num > 0 {
+                self.disk.read(blk_num as usize, &mut block_data[start..end]);
+                start = end;
+                end = start + Disk::BLOCK_SIZE;
+                i += 1;
+                bytes_read += Disk::BLOCK_SIZE as i64;
+                self.byte_offset += Disk::BLOCK_SIZE;
+            } else {
+                break
+            }
+        }
+
+        // spill over block
+        let num_bytes = read_len % Disk::BLOCK_SIZE;
+        println!("This is great: {}", num_bytes);
+
+        if num_bytes == 0 {
+            return bytes_read
+        }
+        let mut i = 0;
+        for byte in self {
+            block_data[i + end - Disk::BLOCK_SIZE] = byte;
+            i += 1;
+            bytes_read += 1;
+            if i == num_bytes {
+                break
+            }
+        }
+
+        bytes_read as i64
+    }
+
     pub fn get_inode(&mut self) -> InodeProxy {
         InodeProxy::new(self.fs_meta_data, self.inode_table, self.disk.clone(), self.inumber)
     }
@@ -794,8 +862,6 @@ impl<'a> InodeList<'a> {
             self.fs_meta_data.superblock.inodes += 1;
             self.set_inode(inumber, inode);
             self.save_inode(inumber);
-                // self.inode_index, inumber, self.fs_meta_data.superblock.inodes, 
-                // self.fs_meta_data.inodes_root_block.inode_block().inodes[0]);
             inumber as i64
         }
     }

@@ -258,7 +258,7 @@ fn copyin<'a>(mut fs: FileSystem<'a>, path: &str, inumber: usize) -> (FileSystem
         }
     };
 
-    let mut buffer = [0; Disk::BLOCK_SIZE];
+    let mut buffer = [0; Disk::BLOCK_SIZE * 100];
     let mut offset = 0;
     let mut n = 0;
     loop {
@@ -279,7 +279,7 @@ fn copyin<'a>(mut fs: FileSystem<'a>, path: &str, inumber: usize) -> (FileSystem
         }
         // offset += result;
         n += 1;
-        file.seek(SeekFrom::Start( n as u64 * Disk::BLOCK_SIZE as u64));
+        // file.seek(SeekFrom::Start( n as u64 * Disk::BLOCK_SIZE as u64));
         if actual as usize != result {
             println!("fs.write only wrote {} bytes, not {} bytes", actual, result);
             break;
@@ -301,16 +301,18 @@ fn copyout<'a>(mut fs: FileSystem<'a>, path: &str, inumber: usize) -> (FileSyste
         }
     };
 
-    let mut buffer = [0; Disk::BLOCK_SIZE];
+    const BUFFER_SIZE: usize = Disk::BLOCK_SIZE * 100 - 203;
+
+    let mut buffer = [0; BUFFER_SIZE];
     let mut offset = 0;
 
     loop {
-        let result = fs.read(inumber, &mut buffer, Disk::BLOCK_SIZE, offset);
+        let result = fs.read(inumber, &mut buffer, BUFFER_SIZE, offset);
         if result <= 0 {
             break;
         }
 
-        if result < Disk::BLOCK_SIZE as i64 {
+        if result < BUFFER_SIZE as i64 {
             let mut buff = &buffer[0..result as usize];
             file.write(&mut buff);            
         } else {
