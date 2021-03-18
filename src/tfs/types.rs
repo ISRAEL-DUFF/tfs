@@ -84,7 +84,6 @@ pub fn get_inode_block(inode_table: &Vec<(u32, InodeBlock)>, i: usize) -> (u32, 
     (block_num, inodeblock.as_block())
 }
 
-
 pub fn set_inode(inode_table: &mut Vec<(u32, InodeBlock)>, inumber: usize, inode: Inode) {
     let (blk_n, mut block) = get_inode_block(inode_table, inumber);
     let i = inumber % (INODES_PER_BLOCK - 1);
@@ -531,7 +530,7 @@ impl<'a> InodeWriteIter<'a> {
         } else {
             // flush current block
             if !self.flush() {
-                // println!("No flush");
+                // println!("No flush {}", self.data_blocks.len());
                 return (false, -1);
             };
 
@@ -590,7 +589,7 @@ impl<'a> InodeWriteIter<'a> {
 
         let mut inode = self.get_inode();
         inode.incr_size(Disk::BLOCK_SIZE);
-        inode.save();
+        // inode.save();
         true
     }
 
@@ -602,6 +601,7 @@ impl<'a> InodeWriteIter<'a> {
             unsafe {
                 (*this).disk.write(self.data_block_num as usize, self.curr_data_block.data_as_mut());
                 (*this).get_inode().incr_size(self.next_write_index);
+                println!("F: {}, {}, {}", self.data_block_num, self.data_blocks.len(), self.next_write_index);
                 (*this).next_write_index = 0;
                 (*this).save_inode();
             }
@@ -618,8 +618,8 @@ impl<'a> InodeWriteIter<'a> {
                 let mut inode = (*this).get_inode();
                 (*this).data_blocks.push(new_blk as u32);
                 inode.incr_data_blocks(1);
-                inode.save_data_blocks(&self.data_blocks);
-                inode.save();
+                // inode.save_data_blocks(&self.data_blocks);
+                // inode.save();
                 self.data_block_num = new_blk as u32;
                 self.next_write_index = 0;
             }
@@ -637,7 +637,14 @@ impl<'a> InodeWriteIter<'a> {
         InodeProxy::new(self.fs_meta_data, self.inode_table, self.disk.clone(), self.inumber)
     }
     pub fn save_inode(&mut self) -> bool {
-        self.get_inode().save()
+        let this = self as *mut Self;
+        unsafe {
+            let mut inode = (*this).get_inode();
+            inode.save();
+            println!("Datayyyyblocks: {}", self.data_blocks.len());
+            inode.save_data_blocks(&self.data_blocks);
+        }
+        true
     }
 }
 
@@ -740,7 +747,7 @@ impl<'a> InodeReadIter<'a> {
 
         // spill over block
         let num_bytes = read_len % Disk::BLOCK_SIZE;
-        println!("This is great: {}", num_bytes);
+        // println!("This is great: {}", num_bytes);
 
         if num_bytes == 0 {
             return bytes_read
@@ -781,7 +788,7 @@ impl<'a> Iterator for InodeReadIter<'a> {
             )
         }
         
-        if self.data_blocks[block_index] > 0 {
+        if block_index < self.data_blocks.len() && self.data_blocks[block_index] > 0 {
             let mut block = Block::new();
             self.disk.read(self.data_blocks[block_index] as usize, block.data_as_mut());
             self.curr_data_block = block;
