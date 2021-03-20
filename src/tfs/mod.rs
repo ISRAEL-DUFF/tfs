@@ -247,32 +247,33 @@ impl<'a> FileSystem<'a> {
         let mut inode_iter = unsafe{(*i_list).read_iter(inumber)};
 
         // adjust length
+        let initLen = length.clone();
         let mut length = length;
         let total_length = offset + length;
         let file_size = unsafe {(*i_list).get_inode(inumber).size()};
         if total_length > file_size as usize {
             // length = length - (total_length - file_size as usize);
-            println!("offset: {}, file_size: {}", offset, file_size);
             if offset > file_size as usize {
-                println!("Executed: {}, {}", offset, file_size);
                 return 0
             }
             length = file_size as usize - offset as usize;
+
+            println!("initLen: {}, computedLen: {}, offset: {}, file_size: {}", initLen, length, offset, file_size);
         }
 
         
         let mut i = 0;
         inode_iter.seek(offset);
-        // for byte in inode_iter {
-        //     if i < length {
-        //         data[i] = byte;
-        //         i += 1;
-        //     } else {
-        //         break
-        //     }
-        // }
-        // return i as i64
-        return inode_iter.read_buffer(data, length)    
+        for byte in inode_iter {
+            if i < length {
+                data[i] = byte;
+                i += 1;
+            } else {
+                break
+            }
+        }
+        return i as i64
+        // return inode_iter.read_buffer(data, length)    
     }
 
     pub fn write(&mut self, inumber: usize, data: &mut [u8], length: usize, offset: usize) -> i64 {
@@ -317,18 +318,18 @@ impl<'a> FileSystem<'a> {
             let mut i = 0;
             let mut writer = unsafe { (*i_list).write_iter(inumber) };
 
+            println!("Data Len: {}", data.len());
+
             loop {
                 if i < data.len() {
                     let r = writer.write_byte(data[i]);
                     if r.1 < 0 {
-                        // println!("Tried to allocate space: {:?}, {}", r, i);
                         unsafe {
                             let data_blk = (*fs_ptr).allocate_free_block();
                             writer.add_data_blk(data_blk);
                             continue;
                         }
                     }
-                    // println!("WRite: {:?}, {}", r, i);
                 } else {
                     break
                 }
@@ -344,72 +345,62 @@ impl<'a> FileSystem<'a> {
             }
         };
 
-        let mut block_aligned = false;
-        let mut n_bytes_writen = 0;
+        // let mut block_aligned = false;
+        // let mut n_bytes_writen = 0;
 
-        let (aligned, n_bytes) = writer_iter.align_to_block(&mut data[offset..]);
-        let mut bytes_writen = 0;
+        // let (aligned, n_bytes) = writer_iter.align_to_block(&mut data[offset..]);
+        // let mut bytes_writen = 0;
         
-        block_aligned = aligned;
-        n_bytes_writen = n_bytes;
-        if block_aligned {
-            // println!("Aligned: {}, {}, {}", block_aligned, n_bytes_writen, length);
-            let n_blocks = (length as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
-            let mut i  = 0;
-            let mut start = offset + n_bytes_writen as usize;
-            let mut end = start + Disk::BLOCK_SIZE;
-            bytes_writen += n_bytes_writen;
-            loop {
-                if end > data.len() && (bytes_writen as usize) < length  {
-                    end = data.len();
-                    println!("I did run 1: {}", n_blocks);
-                    writer_iter.flush();
-                    bytes_writen += write_bytes(&mut data[start..end], fs_raw_ptr);
-                    break
-                }
+        // block_aligned = aligned;
+        // n_bytes_writen = n_bytes;
+        // if block_aligned {
+        //     let n_blocks = (length as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
+        //     let mut i  = 0;
+        //     let mut start = offset + n_bytes_writen as usize;
+        //     let mut end = start + Disk::BLOCK_SIZE;
+        //     bytes_writen += n_bytes_writen;
+        //     loop {
+        //         if end > data.len() && (bytes_writen as usize) < length  {
+        //             end = data.len();
+        //             writer_iter.flush();
+        //             bytes_writen += write_bytes(&mut data[start..end], fs_raw_ptr);
+        //             break
+        //         }
 
-                if end > length && (bytes_writen as usize) < length {
-                    end = length;
-                    writer_iter.flush();
-                    let  b = write_bytes(&mut data[start..end], fs_raw_ptr);
-                    bytes_writen += b;
-                    println!("I did run 2 => n_blocks: {}, start: {}, end: {}, bytes: {}", n_blocks, start, end,b);
-                    break
-                }
+        //         if end > length && (bytes_writen as usize) < length {
+        //             end = length;
+        //             writer_iter.flush();
+        //             let  b = write_bytes(&mut data[start..end], fs_raw_ptr);
+        //             bytes_writen += b;
+        //             break
+        //         }
 
-                if i == n_blocks {
-                    writer_iter.flush();
-                    // println!("I did run 3: {}", n_blocks);
-                    if (bytes_writen as usize) < length {
-                        // println!("I did run 4: {}", n_blocks);
-                        bytes_writen += write_bytes(&mut data[start..end], fs_raw_ptr);
-                    }
-                    break
-                }
+        //         if i == n_blocks {
+        //             writer_iter.flush();
+        //             if (bytes_writen as usize) < length {
+        //                 bytes_writen += write_bytes(&mut data[start..end], fs_raw_ptr);
+        //             }
+        //             break
+        //         }
 
-                unsafe {
-                    let success = writer_iter.write_block((*fs_raw_ptr).allocate_free_block(), &mut data[start..end]);
-                    if !success {
-                        break
-                    }
-                }
+        //         unsafe {
+        //             let success = writer_iter.write_block((*fs_raw_ptr).allocate_free_block(), &mut data[start..end]);
+        //             if !success {
+        //                 break
+        //             }
+        //         }
 
-                start = end;
-                end = start + Disk::BLOCK_SIZE;
-                i += 1;
-                bytes_writen += Disk::BLOCK_SIZE as i64;
-            }
+        //         start = end;
+        //         end = start + Disk::BLOCK_SIZE;
+        //         i += 1;
+        //         bytes_writen += Disk::BLOCK_SIZE as i64;
+        //     }
 
-            // println!("Before Flushed: {}", writer_iter.get_inode().size());
-            // if writer_iter.flush() {
-            //     // println!("After Flushed: {}", writer_iter.get_inode().size());
-            //     return bytes_writen as i64;
-            // } else {
-            //   return  -1
-            // }
-            return bytes_writen as i64;
-        }
-        -1
+        //     return bytes_writen as i64;
+        // }
+        // -1
+
+        return write_bytes(&mut data[offset..(offset+length)], fs_raw_ptr);
     }
 
     // ****************** helper methods and functions *******************

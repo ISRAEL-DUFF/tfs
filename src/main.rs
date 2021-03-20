@@ -260,6 +260,7 @@ fn copyin<'a>(mut fs: FileSystem<'a>, path: &str, inumber: usize) -> (FileSystem
 
     let mut buffer = [0; Disk::BLOCK_SIZE * 100];
     let mut offset = 0;
+    let mut len = 0;
     let mut n = 0;
     loop {
         let result = match file.read(&mut buffer) {
@@ -277,7 +278,7 @@ fn copyin<'a>(mut fs: FileSystem<'a>, path: &str, inumber: usize) -> (FileSystem
             println!("fs.write returned invalid result {}", actual);
             break;
         }
-        // offset += result;
+        len += result;
         n += 1;
         // file.seek(SeekFrom::Start( n as u64 * Disk::BLOCK_SIZE as u64));
         if actual as usize != result {
@@ -285,14 +286,14 @@ fn copyin<'a>(mut fs: FileSystem<'a>, path: &str, inumber: usize) -> (FileSystem
             break;
         }
     }
-    println!("{} bytes copied", offset);
+    println!("{} bytes copied", len);
     (fs, true)
 }
 
 
 fn copyout<'a>(mut fs: FileSystem<'a>, path: &str, inumber: usize) -> (FileSystem<'a>, bool) {
     use std::fs::{File, OpenOptions};
-    let file = OpenOptions::new().write(true).open(path);
+    let file = OpenOptions::new().write(true).create(true).open(path);
     let mut file = match file {
          Ok(f) => f,
         _ => {
@@ -301,7 +302,7 @@ fn copyout<'a>(mut fs: FileSystem<'a>, path: &str, inumber: usize) -> (FileSyste
         }
     };
 
-    const BUFFER_SIZE: usize = Disk::BLOCK_SIZE * 100 - 203;
+    const BUFFER_SIZE: usize = Disk::BLOCK_SIZE * 100;
 
     let mut buffer = [0; BUFFER_SIZE];
     let mut offset = 0;

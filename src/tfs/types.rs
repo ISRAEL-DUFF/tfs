@@ -43,6 +43,12 @@ pub struct InodeProxy<'c> {
     disk: Disk<'c>
 }
 
+pub struct InodeDataPointer<'d> {
+    pointers: Vec<u32>,
+    disk: &'d mut Disk<'d>,
+    root_ptr: u32
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct InodeBlock {
     pub inodes: [Inode; INODES_PER_BLOCK - 1],
@@ -223,6 +229,57 @@ impl Inode {
 
     pub fn pointer_level(&self) -> u32 {
         self.blk_pointer_level
+    }
+}
+
+impl<'d> InodeDataPointer<'d> {
+    pub fn new<'e:'d>(disk: &'e mut Disk<'d>, root_ptr: u32) -> Self {
+        InodeDataPointer {
+            root_ptr,
+            disk,
+            pointers: Vec::new()
+        }
+    }
+
+    pub fn level(mut self, n: usize) -> Self {
+        let data_block = self.root_ptr;
+        let index_zero = |array: [u32; POINTERS_PER_BLOCK]| {
+            let mut i = 0;
+            loop {
+                if i == array.len() || array[i] == 0 {
+                    break
+                }
+                i += 1;
+            }
+            i
+        };
+        match n {
+            1 => {  // single indirect pointers
+                let mut block = Block::new();
+                self.disk.read(self.root_ptr as usize, block.data_as_mut());
+                let i = index_zero(block.pointers());
+                self.pointers = Vec::from(&block.pointers()[0..i]);
+            },
+            _ => {
+                let mut data_blks = Block::new();
+                let mut data_blocks = Vec::new();
+                for blk in self.pointers.iter() {
+                    if *blk == 0 {
+                        break
+                    }
+                    self.disk.read(*blk as usize, data_blks.data_as_mut());
+                    let i = index_zero(data_blks.pointers());
+                    data_blocks.extend_from_slice(&data_blks.pointers()[..i]);
+                }
+                self.pointers = data_blocks;
+            }
+        }
+        //
+        self
+    }
+
+    pub fn blocks(self) -> Vec<u32> {
+        self.pointers
     }
 }
 
@@ -450,6 +507,8 @@ pub struct InodeWriteIter<'a> {
     data_block_num: u32,
     data_block_index: usize,
     next_write_index: usize,
+    flushed: bool,
+    aligned_to_block: bool,
     inode_table: &'a mut Vec<(u32, InodeBlock)>,
     fs_meta_data: &'a mut MetaData
 }
@@ -475,6 +534,8 @@ impl<'a> InodeWriteIter<'a> {
                 data_block_num: 0,
                 data_block_index: 0,
                 next_write_index: 0,
+                flushed: false,
+                aligned_to_block: false,
                 inode_table: &mut (*i_table),
                 fs_meta_data: &mut (*meta_data)
             };
@@ -526,11 +587,13 @@ impl<'a> InodeWriteIter<'a> {
         if self.next_write_index < Disk::BLOCK_SIZE && self.data_blocks.len() > 0 {
             self.curr_data_block.data_as_mut()[self.next_write_index] = byte;
             self.next_write_index += 1;
+            self.aligned_to_block = false;
+            self.flushed = false;
             (true, 1)
         } else {
             // flush current block
             if !self.flush() {
-                // println!("No flush {}", self.data_blocks.len());
+                println!("No flush {}", self.data_blocks.len());
                 return (false, -1);
             };
 
@@ -544,6 +607,8 @@ impl<'a> InodeWriteIter<'a> {
 
                 self.curr_data_block.data_as_mut()[self.next_write_index] = byte;
                 self.next_write_index += 1;
+                self.aligned_to_block = false;
+                self.flushed = false;
                 return (true, 1)
             } else {    // add new data block
                 (false, -1)
@@ -554,12 +619,17 @@ impl<'a> InodeWriteIter<'a> {
     // the align_to_block() method is used to align the write position to the beginning of a new block
     // this enables the use of write_block() method.
     pub fn align_to_block(&mut self, block_data: &mut [u8]) -> (bool, i64) {
+        if self.aligned_to_block {
+            return (true, 0)
+        }
+
         let n = Disk::BLOCK_SIZE - self.next_write_index;
         if block_data.len() < n {
             return (false, -1)
         }
 
         if self.get_inode().size() == 0 || self.next_write_index == 0 || self.next_write_index == Disk::BLOCK_SIZE {
+            self.aligned_to_block = true;
             return (true, 0)
         }
 
@@ -571,11 +641,12 @@ impl<'a> InodeWriteIter<'a> {
             }
             m += 1;
         }
+        self.aligned_to_block = true;
         (true, m as i64)
     }
 
     pub fn write_block(&mut self, block_num: i64, block_data: &mut [u8]) -> bool {
-        if block_num < 0 {
+        if block_num < 0  || !self.aligned_to_block {
             return false
         }
         if block_data.len() < Disk::BLOCK_SIZE {
@@ -586,6 +657,7 @@ impl<'a> InodeWriteIter<'a> {
             return false
         }
         self.disk.write(block_num as usize, block_data);
+        self.aligned_to_block = true;
 
         let mut inode = self.get_inode();
         inode.incr_size(Disk::BLOCK_SIZE);
@@ -593,25 +665,34 @@ impl<'a> InodeWriteIter<'a> {
         true
     }
 
-    pub fn flush(&mut self) -> bool {   
+    pub fn flush(&mut self) -> bool {
         // write current block to disk
         // increase file size and reset next write index
         let this = self as *mut Self;
         if self.data_block_num > 0 && self.data_blocks.len() > 0 {
             unsafe {
-                (*this).disk.write(self.data_block_num as usize, self.curr_data_block.data_as_mut());
-                (*this).get_inode().incr_size(self.next_write_index);
-                println!("F: {}, {}, {}", self.data_block_num, self.data_blocks.len(), self.next_write_index);
-                (*this).next_write_index = 0;
+                if !self.aligned_to_block && !self.flushed {
+                    (*this).disk.write(self.data_block_num as usize, self.curr_data_block.data_as_mut());
+                    (*this).get_inode().incr_size(self.next_write_index);
+                    println!("Wrote to block: {}", self.data_block_num);
+                 } 
+                
+                // println!("F: {}, {}, {}", self.data_block_num, self.data_blocks.len(), self.next_write_index);
+                if (*this).next_write_index == Disk::BLOCK_SIZE {
+                    (*this).next_write_index = 0;
+                }
+                (*this).flushed = true;
                 (*this).save_inode();
             }
             true
         } else {
+            // println!("DId not flush: {}, {}", self.data_block_num, self.data_blocks.len());
             false
         }
     }
 
     pub fn add_data_blk(&mut self, new_blk: i64) -> bool {
+        println!("Adding block: {}", new_blk);
         if new_blk > 0 {
             let this = self as *mut Self;
             unsafe {
@@ -641,7 +722,6 @@ impl<'a> InodeWriteIter<'a> {
         unsafe {
             let mut inode = (*this).get_inode();
             inode.save();
-            println!("Datayyyyblocks: {}", self.data_blocks.len());
             inode.save_data_blocks(&self.data_blocks);
         }
         true
@@ -718,6 +798,9 @@ impl<'a> InodeReadIter<'a> {
     pub fn read_buffer(&mut self, block_data: &mut [u8], length: usize) -> i64 {
         let mut read_len = length; //block_data.len();
         let (success, num_bytes) = self.align_to_block(&mut block_data[..]);
+        if !success {
+            return -1;
+        }
         read_len -= num_bytes as usize;
         let mut bytes_read = num_bytes;
 
@@ -729,7 +812,7 @@ impl<'a> InodeReadIter<'a> {
         let mut end = start + Disk::BLOCK_SIZE;
         loop {
             if block_offset + i >= self.data_blocks.len() || i == num_blocks {
-                println!("This is me: {}, {}, {}, {}", num_blocks, block_offset, i, self.data_blocks.len());
+                // println!("This is me: {}, {}, {}, {}", num_blocks, block_offset, i, self.data_blocks.len());
                 break
             }
             let blk_num = self.data_blocks[block_offset + i];
@@ -747,7 +830,7 @@ impl<'a> InodeReadIter<'a> {
 
         // spill over block
         let num_bytes = read_len % Disk::BLOCK_SIZE;
-        // println!("This is great: {}", num_bytes);
+        println!("This is great: {}", num_bytes);
 
         if num_bytes == 0 {
             return bytes_read
