@@ -38,15 +38,17 @@ pub struct Inode {
 
 pub struct InodeProxy<'c> {
     inumber: usize,
+    data_manager: Option<InodeDataPointer<'c>>,
     inode_table: &'c mut Vec<(u32, InodeBlock)>,
     fs_meta_data: &'c mut MetaData,
     disk: Disk<'c>
 }
 
 pub struct InodeDataPointer<'d> {
-    pointers: Vec<u32>,
+    pub direct_ptrs: Vec<u32>,
+    pub indirect_ptrs: Vec<Vec<u32>>,    // the len of indirect_ptrs = depth
     disk: &'d mut Disk<'d>,
-    root_ptr: u32
+    pub root_ptr: u32
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -237,11 +239,25 @@ impl<'d> InodeDataPointer<'d> {
         InodeDataPointer {
             root_ptr,
             disk,
-            pointers: Vec::new()
+            direct_ptrs: Vec::new(),
+            indirect_ptrs: Vec::new()
         }
     }
 
-    pub fn level(mut self, n: usize) -> Self {
+    pub fn with_depth<'e:'d>(depth: usize, disk: &'e mut Disk<'d>, root_ptr: u32) -> Self {
+        let mut d = Self::new(disk, root_ptr);
+        d.set_depth(depth)
+    }
+
+    pub fn debug(&self) {
+        println!("*********** Inode Data Pointer *************");
+        println!("Root Ptr: {}", self.root_ptr);
+        println!("Direct Ptrs: {:?}", self.direct_ptrs.len());
+        println!("InDirect Ptrs: {:?}", self.indirect_ptrs.len());
+        println!("*********** End *************");
+    }
+
+    pub fn to_depth(mut self, n: usize) -> Self {
         let data_block = self.root_ptr;
         let index_zero = |array: [u32; POINTERS_PER_BLOCK]| {
             let mut i = 0;
@@ -258,12 +274,14 @@ impl<'d> InodeDataPointer<'d> {
                 let mut block = Block::new();
                 self.disk.read(self.root_ptr as usize, block.data_as_mut());
                 let i = index_zero(block.pointers());
-                self.pointers = Vec::from(&block.pointers()[0..i]);
+                // println!("AAAAAAA: {}, {}, {:?}", self.root_ptr, i, block.pointers());
+                self.direct_ptrs = Vec::from(&block.pointers()[0..i]);
+                // println!("BBBBBBB: {}, {}, {:?}", self.root_ptr, i, self.direct_ptrs);
             },
             _ => {
                 let mut data_blks = Block::new();
                 let mut data_blocks = Vec::new();
-                for blk in self.pointers.iter() {
+                for blk in self.direct_ptrs.iter() {
                     if *blk == 0 {
                         break
                     }
@@ -271,16 +289,146 @@ impl<'d> InodeDataPointer<'d> {
                     let i = index_zero(data_blks.pointers());
                     data_blocks.extend_from_slice(&data_blks.pointers()[..i]);
                 }
-                self.pointers = data_blocks;
+                self.direct_ptrs = data_blocks;
             }
         }
         //
         self
     }
 
-    pub fn blocks(self) -> Vec<u32> {
-        self.pointers
+    pub fn set_depth(mut self, level: usize) -> Self {
+        for n in 1..level+1 {
+            self = self.to_depth(n);
+            // println!("In RESPS: {}, {:?}", n, self.direct_ptrs);
+            if n <= level {
+                let mut start = 0;
+                let mut end = POINTERS_PER_BLOCK;
+                loop {
+                    if end >= self.direct_pointers().len() {
+                        end = self.direct_pointers().len();
+                        self.indirect_ptrs.push(Vec::from(&self.direct_pointers()[start..end]));
+                        break
+                    }
+                    self.indirect_ptrs.push(Vec::from(&self.direct_pointers()[start..end]));
+                    start = end;
+                    end = start + POINTERS_PER_BLOCK;
+                }
+            }
+        }
+        self
     }
+
+    pub fn blocks(self) -> Vec<u32> {
+        self.direct_ptrs
+    }
+
+    pub fn direct_pointers(&self) -> &Vec<u32> {
+        &self.direct_ptrs
+    }
+
+    pub fn depth(&self) -> usize {
+        ((self.direct_ptrs.len() as f64).log(POINTERS_PER_BLOCK as f64)).floor() as usize
+    }
+
+    pub fn add_data_block(&mut self, blk: i64) -> i64 {
+        if blk > 0 {
+            let mut p = self.direct_ptrs.len();
+            let ptrs = p;
+
+            // get highest depth
+            let mut depth = self.depth();
+            
+            // get the positions at the different depths
+            let mut depth_pos = vec![];
+            loop {
+                if depth > 0 {
+                    p = (ptrs / POINTERS_PER_BLOCK.pow(depth as u32)) as usize;
+                    depth_pos.push(p);
+                    depth -= 1;
+                } else {
+                    break
+                }
+            }
+
+            if self.indirect_ptrs.len() < depth_pos.len() {
+                // increase depth / level
+                println!("INCREASED DEPTH");
+                self.indirect_ptrs.push(vec![blk as u32]);
+                return self.indirect_ptrs.len() as i64;
+            }
+
+            for d in 0..depth_pos.len() {
+                if self.indirect_ptrs[d].len() <= depth_pos[d] {
+                    self.indirect_ptrs[d].push(blk as u32);
+                    return (d + 1) as i64;
+                }
+            }
+            self.direct_ptrs.push(blk as u32);
+            return 0;
+        } else {
+            return -1;
+        }
+    }
+
+    pub fn save(&mut self) {
+        let this = self as *mut Self;
+
+        let fill_zeros = |array: &[u32]| {
+            let mut i = 0;
+            let mut block = Block::new();
+            loop {
+                if i == array.len(){
+                    break
+                }
+                block.pointers_as_mut()[i] = array[i];
+                i += 1;
+            }
+            return block.data();
+        };
+
+        let write_disk = |curr_ptrs: &mut Vec<u32>, prev_ptrs: &mut Vec<u32>, mut disk: Disk| {
+            let mut j = 0;
+                let mut start = 0;
+                let mut end = POINTERS_PER_BLOCK;
+                loop {
+                    if end > curr_ptrs.len() {
+                        end = curr_ptrs.len();
+                        disk.write(prev_ptrs[j] as usize, &mut fill_zeros(&curr_ptrs[start..end]));
+                        break;
+                    } else {
+                        disk.write(prev_ptrs[j] as usize, &mut fill_zeros(&curr_ptrs[start..end]));
+                        start = end;
+                        end = start + POINTERS_PER_BLOCK;
+                        j += 1;
+                    }
+
+                    if j == prev_ptrs.len() {
+                        break;
+                    }
+                }
+        };
+
+        for i in 0..self.indirect_ptrs.len() {
+            if i == 0 {
+                println!("This is really what it is");
+                self.disk.write(self.root_ptr as usize, &mut fill_zeros(self.indirect_ptrs[0].as_slice()));
+            } else {
+                unsafe {
+                    write_disk(&mut (*this).indirect_ptrs[i - 1], &mut self.indirect_ptrs[i], self.disk.clone());
+
+                    if i + 1 == self.indirect_ptrs.len() {
+                        write_disk(&mut (*this).indirect_ptrs[i], &mut self.direct_ptrs, self.disk.clone());
+                    }
+                }
+            }
+        }
+
+        if self.indirect_ptrs.len() == 0 {
+            // println!("DONE SND: {:?}", self.direct_ptrs);
+            self.disk.write(self.root_ptr as usize, &mut fill_zeros(self.direct_ptrs.as_slice()));
+        }
+    }
+
 }
 
 impl<'c> InodeProxy<'c> {
@@ -291,6 +439,7 @@ impl<'c> InodeProxy<'c> {
     ) -> Self {
         InodeProxy {
             inumber,
+            data_manager: None,
             inode_table,
             fs_meta_data,
             disk
@@ -312,14 +461,37 @@ impl<'c> InodeProxy<'c> {
         let (i, j) = self.get_index();
         self.inode_table[i].1.inodes[j].data_block
     }
+
+    pub fn data_blocks<'d:'c>(&'d mut self) -> &Vec<u32> {
+       let this = self as *mut Self;
+       let data_manager = match &self.data_manager {
+            Some(data_manager) => {
+                data_manager
+            },
+            _ => {
+                let manager = InodeDataPointer::new(&mut self.disk, unsafe{(*this).data_block()});
+               unsafe{ (*this).data_manager = Some(manager); }
+                match &self.data_manager {
+                    Some(m) => m,
+                    _ => panic!("Unable to create inode data manager")
+                }
+            }
+        };
+        &data_manager.direct_pointers()
+    }
+
     pub fn pointer_level(&self) -> u32 {
         let (i, j) = self.get_index();
         self.inode_table[i].1.inodes[j].blk_pointer_level
     }
 
-    pub fn set_data_block(&mut self, blk: u32) {
+    pub fn set_data_block<'f:'c>(&'f mut self, blk: u32) {
         let (i, j) = self.get_index();
         self.inode_table[i].1.inodes[j].data_block = blk;
+        println!("SEt data block called: {}", blk);
+        self.data_manager = Some(
+            InodeDataPointer::new(&mut self.disk, blk)
+        );
     }
 
     pub fn incr_size(&mut self, amount: usize) {
@@ -330,14 +502,42 @@ impl<'c> InodeProxy<'c> {
     pub fn incr_data_blocks(&mut self, amount: usize) {
         let (i, j) = self.get_index();
         self.inode_table[i].1.inodes[j].total_data_blocks += amount as u32;
-        let data_blocks = self.inode_table[i].1.inodes[j].total_data_blocks;
+        // let data_blocks = self.inode_table[i].1.inodes[j].total_data_blocks;
+        // if data_blocks as usize == POINTERS_PER_BLOCK || 
+        //   data_blocks as usize == POINTERS_PER_BLOCK.pow(2) || 
+        //   data_blocks as usize == POINTERS_PER_BLOCK.pow(3) {
+        //     self.inode_table[i].1.inodes[j].blk_pointer_level += 1;
+        //     // println!("*******Increased pointer level******")
+        // }
+    }
 
-        if data_blocks as usize == POINTERS_PER_BLOCK || 
-          data_blocks as usize == POINTERS_PER_BLOCK.pow(2) || 
-          data_blocks as usize == POINTERS_PER_BLOCK.pow(3) {
-            self.inode_table[i].1.inodes[j].blk_pointer_level += 1;
-            // println!("*******Increased pointer level******")
-        }
+    pub fn add_data_block<'h: 'c>(&'h mut self, blk: i64) -> i64 {
+        println!("ADDDDDDDDDDDD");
+        let this = self as *mut Self;
+       let data_manager = match &mut self.data_manager {
+            Some(data_manager) => {
+                data_manager
+            },
+            _ => {
+                println!("NOD NEEHEEHEHHEEH");
+                let manager = InodeDataPointer::new(&mut self.disk, unsafe{(*this).data_block()});
+                self.data_manager = Some(
+                    manager
+                );
+                match &mut self.data_manager {
+                    Some(m) => m,
+                    _ => return -1
+                }
+            }
+        };
+
+        let r = data_manager.add_data_block(blk);
+        let d = (data_manager.depth() + 1 )as u32;
+        println!("REAl ADD databablock: {}, {}", blk, d);
+        let (i, j) = unsafe {(*this).get_index()};
+        self.inode_table[i].1.inodes[j].blk_pointer_level = d;
+        unsafe{(*this).incr_data_blocks(1)};
+        return r;
     }
 
     pub fn save(&mut self) -> bool {
@@ -352,147 +552,166 @@ impl<'c> InodeProxy<'c> {
     }
 
 
-    pub fn save_data_blocks(&mut self, data_blocks: &Vec<u32>) {
-        // println!("Pointer Data Block: {}, level: {}, {}", self.data_block(), self.pointer_level(), data_blocks.len());
-        let root_block = fetch_block(&mut self.disk.clone(), self.data_block() as usize);
-        match self.pointer_level() {
-            1 => {
-                // println!("1st level");
-                let mut i = 0;
-                let mut direct_pointers = Block::new();
-                for j in 0..root_block.pointers().len() {
-                    if i < data_blocks.len() && data_blocks[i] > 0 {
-                        direct_pointers.pointers_as_mut()[j as usize] = data_blocks[i];
-                        i += 1;
-                    } else {
-                        break
-                    }
-                }
-                if self.data_block() > 0 {
-                    self.disk.write(self.data_block() as usize, direct_pointers.data_as_mut());
-                }
-            },
+    // pub fn save_data_blocks(&mut self, data_blocks: &Vec<u32>) {
+    //     // println!("Pointer Data Block: {}, level: {}, {}", self.data_block(), self.pointer_level(), data_blocks.len());
+    //     let root_block = fetch_block(&mut self.disk.clone(), self.data_block() as usize);
+    //     match self.pointer_level() {
+    //         1 => {
+    //             // println!("1st level");
+    //             let mut i = 0;
+    //             let mut direct_pointers = Block::new();
+    //             for j in 0..root_block.pointers().len() {
+    //                 if i < data_blocks.len() && data_blocks[i] > 0 {
+    //                     direct_pointers.pointers_as_mut()[j as usize] = data_blocks[i];
+    //                     i += 1;
+    //                 } else {
+    //                     break
+    //                 }
+    //             }
+    //             if self.data_block() > 0 {
+    //                 self.disk.write(self.data_block() as usize, direct_pointers.data_as_mut());
+    //             }
+    //         },
     
-            2 => {
-                // println!("2nd level");
-                let mut i = 0;
-                for ptr1 in root_block.pointers().iter() {
-                    if *ptr1 > 0 {
-                        let mut direct_pointers = Block::new();
-                        for j in 0..POINTERS_PER_BLOCK {
-                            if i < data_blocks.len() {
-                                direct_pointers.pointers_as_mut()[j] = data_blocks[i];
-                                i += 1;
-                            } else {
-                                break
-                            }
-                        }
-                        self.disk.write(*ptr1 as usize, direct_pointers.data_as_mut());
-                    } else {
-                        break
-                    }
-                }
-            },
+    //         2 => {
+    //             // println!("2nd level");
+    //             let mut i = 0;
+    //             for ptr1 in root_block.pointers().iter() {
+    //                 if *ptr1 > 0 {
+    //                     let mut direct_pointers = Block::new();
+    //                     for j in 0..POINTERS_PER_BLOCK {
+    //                         if i < data_blocks.len() {
+    //                             direct_pointers.pointers_as_mut()[j] = data_blocks[i];
+    //                             i += 1;
+    //                         } else {
+    //                             break
+    //                         }
+    //                     }
+    //                     self.disk.write(*ptr1 as usize, direct_pointers.data_as_mut());
+    //                 } else {
+    //                     break
+    //                 }
+    //             }
+    //         },
     
-            3 => {
-                let mut i = 0;
-                for ptr1 in root_block.pointers().iter() {
-                    if *ptr1 > 0 {
-                        let root_2_blocks = fetch_block(&mut self.disk, *ptr1 as usize);
-                        for ptr2 in root_2_blocks.pointers().iter() {
-                            if *ptr2 > 0 {
-                                let mut direct_pointers = Block::new();
-                                for j in 0..POINTERS_PER_BLOCK {
-                                    if i < data_blocks.len() {
-                                        direct_pointers.pointers_as_mut()[j] = data_blocks[i];
-                                        i += 1;
-                                    } else {
-                                        break
-                                    }
-                                }
-                                self.disk.write(*ptr2 as usize, direct_pointers.data_as_mut());
-                            } else {
-                                break
-                            }
-                        }
-                    } else {
-                        break
-                    }
-                }
-            },
+    //         3 => {
+    //             let mut i = 0;
+    //             for ptr1 in root_block.pointers().iter() {
+    //                 if *ptr1 > 0 {
+    //                     let root_2_blocks = fetch_block(&mut self.disk, *ptr1 as usize);
+    //                     for ptr2 in root_2_blocks.pointers().iter() {
+    //                         if *ptr2 > 0 {
+    //                             let mut direct_pointers = Block::new();
+    //                             for j in 0..POINTERS_PER_BLOCK {
+    //                                 if i < data_blocks.len() {
+    //                                     direct_pointers.pointers_as_mut()[j] = data_blocks[i];
+    //                                     i += 1;
+    //                                 } else {
+    //                                     break
+    //                                 }
+    //                             }
+    //                             self.disk.write(*ptr2 as usize, direct_pointers.data_as_mut());
+    //                         } else {
+    //                             break
+    //                         }
+    //                     }
+    //                 } else {
+    //                     break
+    //                 }
+    //             }
+    //         },
     
+    //         _ => {}
+    //     }
+    // }
+
+    pub fn save_data_blocks(&mut self) {
+        match &mut self.data_manager {
+            Some(data_manager) => {
+                data_manager.save();
+            },
             _ => {}
-        }
+        };
     }
 
-    fn to_direct_pointers(&mut self) -> Vec<u32> {
-        let data_block = self.data_block();
-        let index_zero = |array: [u32; POINTERS_PER_BLOCK]| {
-            let mut i = 0;
-            loop {
-                if i == array.len() || array[i] == 0 {
-                    break
-                }
-                i += 1;
-            }
-            i
-        };
-        match self.pointer_level() {
-            1 => {  // single indirect pointers
-                if data_block == 0 {
-                    return vec![]
-                }
-                let mut block = Block::new();
-                self.disk.read(self.data_block() as usize, block.data_as_mut());
-                let i = index_zero(block.pointers());
-                Vec::from(&block.pointers()[0..i])
-            },
-            2 => {
-                if data_block == 0 {
-                    return vec![]
-                }
-                let mut block = Block::new();
-                self.disk.read(self.data_block() as usize, block.data_as_mut());
+    // fn to_direct_pointers(&mut self) -> Vec<u32> {
+    //     let data_block = self.data_block();
+    //     let index_zero = |array: [u32; POINTERS_PER_BLOCK]| {
+    //         let mut i = 0;
+    //         loop {
+    //             if i == array.len() || array[i] == 0 {
+    //                 break
+    //             }
+    //             i += 1;
+    //         }
+    //         i
+    //     };
+    //     match self.pointer_level() {
+    //         1 => {  // single indirect pointers
+    //             if data_block == 0 {
+    //                 return vec![]
+    //             }
+    //             let mut block = Block::new();
+    //             self.disk.read(self.data_block() as usize, block.data_as_mut());
+    //             let i = index_zero(block.pointers());
+    //             Vec::from(&block.pointers()[0..i])
+    //         },
+    //         2 => {
+    //             if data_block == 0 {
+    //                 return vec![]
+    //             }
+    //             let mut block = Block::new();
+    //             self.disk.read(self.data_block() as usize, block.data_as_mut());
 
-                let mut data_blks = Block::new();
-                let mut data_blocks = Vec::new();
-                for blk in block.pointers().iter() {
-                    if *blk == 0 {
-                        break
-                    }
-                    self.disk.read(*blk as usize, data_blks.data_as_mut());
-                    let i = index_zero(data_blks.pointers());
-                    data_blocks.extend_from_slice(&data_blks.pointers()[..i]);
-                }
-                data_blocks
-            },
-            3 => {
-                if data_block == 0 {
-                    return vec![]
-                }
-                let mut block = Block::new();
-                self.disk.read(self.data_block() as usize, block.data_as_mut());
+    //             let mut data_blks = Block::new();
+    //             let mut data_blocks = Vec::new();
+    //             for blk in block.pointers().iter() {
+    //                 if *blk == 0 {
+    //                     break
+    //                 }
+    //                 self.disk.read(*blk as usize, data_blks.data_as_mut());
+    //                 let i = index_zero(data_blks.pointers());
+    //                 data_blocks.extend_from_slice(&data_blks.pointers()[..i]);
+    //             }
+    //             data_blocks
+    //         },
+    //         3 => {
+    //             if data_block == 0 {
+    //                 return vec![]
+    //             }
+    //             let mut block = Block::new();
+    //             self.disk.read(self.data_block() as usize, block.data_as_mut());
 
-                let mut data_blks_1 = Block::new();
-                let mut data_blks_2 = Block::new();
-                let mut data_blocks = Vec::new();
-                for blk in block.pointers().iter() {
-                    if *blk == 0 {
-                        break
-                    }
-                    self.disk.read(*blk as usize, data_blks_1.data_as_mut());
-                    for b in data_blks_1.pointers().iter() {
-                        if *b == 0 {
-                            break
-                        }
-                        self.disk.read(*b as usize, data_blks_2.data_as_mut());
-                        let i = index_zero(data_blks_2.pointers());
-                        data_blocks.extend_from_slice(&data_blks_2.pointers()[..i]);
-                    }
-                }
-                data_blocks
-            },
-            _ => vec![]
+    //             let mut data_blks_1 = Block::new();
+    //             let mut data_blks_2 = Block::new();
+    //             let mut data_blocks = Vec::new();
+    //             for blk in block.pointers().iter() {
+    //                 if *blk == 0 {
+    //                     break
+    //                 }
+    //                 self.disk.read(*blk as usize, data_blks_1.data_as_mut());
+    //                 for b in data_blks_1.pointers().iter() {
+    //                     if *b == 0 {
+    //                         break
+    //                     }
+    //                     self.disk.read(*b as usize, data_blks_2.data_as_mut());
+    //                     let i = index_zero(data_blks_2.pointers());
+    //                     data_blocks.extend_from_slice(&data_blks_2.pointers()[..i]);
+    //                 }
+    //             }
+    //             data_blocks
+    //         },
+    //         _ => vec![]
+    //     }
+    // }
+
+    pub fn to_direct_pointers<'g:'c>(&'g mut self) -> Vec<u32> {
+        let b = self.data_block();
+        if b > 0 {
+            InodeDataPointer::with_depth(self.pointer_level() as usize, &mut self.disk, b)
+            .blocks()
+        } else {
+            Vec::new()
         }
     }
 }
@@ -500,6 +719,7 @@ impl<'c> InodeProxy<'c> {
 
 pub struct InodeWriteIter<'a> {
     inumber: usize,
+    inode: InodeProxy<'a>,
     disk: Disk<'a>,
     buffer: [u8; Disk::BLOCK_SIZE],
     data_blocks: Vec<u32>,
@@ -522,30 +742,51 @@ impl<'a> InodeWriteIter<'a> {
         let meta_data = fs_meta_data as *mut MetaData;
         unsafe {
             let mut inode = InodeProxy::new(&mut (*meta_data), &mut (*i_table), disk.clone(), inumber);
-            let disc = disk.clone();
-            let data_blocks = inode.to_direct_pointers();
+            let mut inode2 = InodeProxy::new(&mut (*meta_data), &mut (*i_table), disk.clone(), inumber);
+            // let mut inode3 = InodeProxy::new(&mut (*meta_data), &mut (*i_table), disk.clone(), inumber);
+            // let disc = disk.clone();
+            let data_blocks = inode2.to_direct_pointers();
+            //println!("DATABASL: {:?}", data_blocks);
             
             let mut i_write = InodeWriteIter {
                 inumber,
                 disk,
                 buffer: [0; Disk::BLOCK_SIZE],
                 data_blocks,
+                inode,
                 curr_data_block: Block::new(),
                 data_block_num: 0,
                 data_block_index: 0,
                 next_write_index: 0,
-                flushed: false,
+                flushed: true,
                 aligned_to_block: false,
                 inode_table: &mut (*i_table),
                 fs_meta_data: &mut (*meta_data)
             };
-            i_write.seek(inode.size() as usize);
-            i_write
+
+            i_write.seek_to_end()            
+
+            // InodeWriteIter {
+            //     inumber,
+            //     disk,
+            //     buffer: [0; Disk::BLOCK_SIZE],
+            //     data_blocks,
+            //     inode,
+            //     curr_data_block: Block::new(),
+            //     data_block_num: 0,
+            //     data_block_index: 0,
+            //     next_write_index: 0,
+            //     flushed: false,
+            //     aligned_to_block: false,
+            //     inode_table: &mut (*i_table),
+            //     fs_meta_data: &mut (*meta_data)
+            // }
         }
     }
 
-    pub fn seek(&mut self, offset: usize) {
-        let inode = self.get_inode();
+    pub fn seek<'h: 'a>(&'h mut self, offset: usize) {
+        let this = self as *mut Self;
+        let inode = unsafe {(*this).get_inode()};
         if offset as u32 > inode.size() {
             let offset = inode.size();
         }
@@ -564,7 +805,29 @@ impl<'a> InodeWriteIter<'a> {
         }
     }
 
-    pub fn has_datablock(&mut self) -> bool {
+    pub fn seek_to_end(mut self) -> Self {
+        let this = &mut self as *mut Self;
+        let inode = unsafe {(*this).get_inode()};
+        let offset = inode.size() as usize;
+
+        self.data_block_index = (offset as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
+        self.next_write_index = offset % Disk::BLOCK_SIZE;
+        if self.data_block_index < self.data_blocks.len() {
+            self.data_block_num = self.data_blocks[self.data_block_index];
+            let mut curr_blk = Block::new();
+            self.disk.read(self.data_block_num as usize, curr_blk.data_as_mut());
+            self.curr_data_block = curr_blk;
+        } else {
+            self.next_write_index = Disk::BLOCK_SIZE;
+            self.data_block_num = 0;
+            self.curr_data_block = Block::new();
+        }
+
+        self
+    } 
+
+    pub fn has_datablock<'h: 'a>(&'h mut self) -> bool {
+        // println!("Has databalock: {}", self.get_inode().data_block());
         if self.get_inode().data_block() > 0 {
             true
         } else {
@@ -572,9 +835,10 @@ impl<'a> InodeWriteIter<'a> {
         }
     }
 
-    pub fn set_data_block(&mut self, blk_num: i64) -> bool {
+    pub fn set_data_block<'h: 'a>(&'h mut self, blk_num: i64) -> bool {
         if blk_num > 0 {
-            let mut inode = self.get_inode();
+            let this = self as *mut Self;
+            let mut inode = unsafe{(*this).get_inode()};
             inode.set_data_block(blk_num as u32);
             self.save_inode();
             true
@@ -583,8 +847,13 @@ impl<'a> InodeWriteIter<'a> {
         }
     }
 
-    pub fn write_byte(&mut self, byte: u8) -> (bool, i64) {
-        if self.next_write_index < Disk::BLOCK_SIZE && self.data_blocks.len() > 0 {
+    pub fn write_byte<'h:'a>(&'h mut self, byte: u8) -> (bool, i64) {
+        let this = self as *mut Self;
+        let data_blocks = unsafe {(*this).get_inode().data_blocks()};
+        if data_blocks.len() == 0 {
+            return (false, -1)
+        }
+        if self.next_write_index < Disk::BLOCK_SIZE {
             self.curr_data_block.data_as_mut()[self.next_write_index] = byte;
             self.next_write_index += 1;
             self.aligned_to_block = false;
@@ -593,14 +862,15 @@ impl<'a> InodeWriteIter<'a> {
         } else {
             // flush current block
             if !self.flush() {
-                println!("No flush {}", self.data_blocks.len());
+                println!("No flush {}", data_blocks.len());
                 return (false, -1);
             };
 
             // add another block as current block
-            if self.data_block_index < self.data_blocks.len() - 1 {
+            if self.data_block_index < data_blocks.len() - 1 {
+                println!("RESAON: ");
                 self.data_block_index += 1;
-                self.data_block_num = self.data_blocks[self.data_block_index];
+                self.data_block_num = data_blocks[self.data_block_index];
                 let mut data_block = Block::new();
                 self.disk.read(self.data_block_num.clone() as usize, data_block.data_as_mut());
                 self.curr_data_block = data_block;
@@ -611,6 +881,8 @@ impl<'a> InodeWriteIter<'a> {
                 self.flushed = false;
                 return (true, 1)
             } else {    // add new data block
+                println!("REFUSED: {}, {}", self.data_block_index, data_blocks.len());
+                self.data_block_index += 1;
                 (false, -1)
             }
         }
@@ -618,7 +890,7 @@ impl<'a> InodeWriteIter<'a> {
 
     // the align_to_block() method is used to align the write position to the beginning of a new block
     // this enables the use of write_block() method.
-    pub fn align_to_block(&mut self, block_data: &mut [u8]) -> (bool, i64) {
+    pub fn align_to_block<'h: 'a>(&'h mut self, block_data: &mut [u8]) -> (bool, i64) {
         if self.aligned_to_block {
             return (true, 0)
         }
@@ -627,15 +899,15 @@ impl<'a> InodeWriteIter<'a> {
         if block_data.len() < n {
             return (false, -1)
         }
-
-        if self.get_inode().size() == 0 || self.next_write_index == 0 || self.next_write_index == Disk::BLOCK_SIZE {
+        let this = self as *mut Self;
+        if unsafe{(*this).get_inode().size()} == 0 || self.next_write_index == 0 || self.next_write_index == Disk::BLOCK_SIZE {
             self.aligned_to_block = true;
             return (true, 0)
         }
 
         let mut m = 0;
         loop {
-            let (success, _) = self.write_byte(block_data[m]);
+            let (success, _) = unsafe{(*this).write_byte(block_data[m])};
             if !success {
                 break
             }
@@ -645,7 +917,7 @@ impl<'a> InodeWriteIter<'a> {
         (true, m as i64)
     }
 
-    pub fn write_block(&mut self, block_num: i64, block_data: &mut [u8]) -> bool {
+    pub fn write_block<'h: 'a>(&'h mut self, block_num: i64, block_data: &mut [u8]) -> bool {
         if block_num < 0  || !self.aligned_to_block {
             return false
         }
@@ -653,7 +925,7 @@ impl<'a> InodeWriteIter<'a> {
             return false
         }
 
-        if !self.add_data_blk(block_num) {
+        if self.add_data_blk(block_num) < 0 {
             return false
         }
         self.disk.write(block_num as usize, block_data);
@@ -669,15 +941,16 @@ impl<'a> InodeWriteIter<'a> {
         // write current block to disk
         // increase file size and reset next write index
         let this = self as *mut Self;
-        if self.data_block_num > 0 && self.data_blocks.len() > 0 {
+        let data_blocks = unsafe {(*this).get_inode().data_blocks()};
+        if self.data_block_num > 0 && data_blocks.len() > 0 {
             unsafe {
                 if !self.aligned_to_block && !self.flushed {
+                    println!("Writing to block: {}", self.data_block_num);
                     (*this).disk.write(self.data_block_num as usize, self.curr_data_block.data_as_mut());
                     (*this).get_inode().incr_size(self.next_write_index);
                     println!("Wrote to block: {}", self.data_block_num);
                  } 
                 
-                // println!("F: {}, {}, {}", self.data_block_num, self.data_blocks.len(), self.next_write_index);
                 if (*this).next_write_index == Disk::BLOCK_SIZE {
                     (*this).next_write_index = 0;
                 }
@@ -686,27 +959,30 @@ impl<'a> InodeWriteIter<'a> {
             }
             true
         } else {
-            // println!("DId not flush: {}, {}", self.data_block_num, self.data_blocks.len());
             false
         }
     }
 
-    pub fn add_data_blk(&mut self, new_blk: i64) -> bool {
+    pub fn add_data_blk(&mut self, new_blk: i64) -> i64 {
         println!("Adding block: {}", new_blk);
         if new_blk > 0 {
             let this = self as *mut Self;
             unsafe {
                 let mut inode = (*this).get_inode();
-                (*this).data_blocks.push(new_blk as u32);
-                inode.incr_data_blocks(1);
+                (*this).data_blocks.push(new_blk as u32); // not needed again
+                let r = inode.add_data_block(new_blk);
+                // inode.incr_data_blocks(1);
+
                 // inode.save_data_blocks(&self.data_blocks);
                 // inode.save();
                 self.data_block_num = new_blk as u32;
                 self.next_write_index = 0;
+                self.curr_data_block = Block::new();
+
+                return r;
             }
-            true
         } else {
-            false
+            return -1;
         }
     }
 
@@ -714,15 +990,19 @@ impl<'a> InodeWriteIter<'a> {
         get_inode_block(self.inode_table, i)
     }
 
-    pub fn get_inode(&mut self) -> InodeProxy {
-        InodeProxy::new(self.fs_meta_data, self.inode_table, self.disk.clone(), self.inumber)
+    pub fn get_inode<'h: 'a>(&'h mut self) -> &mut InodeProxy {
+        // this method is now too expensive because of InodeDataPointer inside InodeProxy struct
+        //InodeProxy::new(self.fs_meta_data, self.inode_table, self.disk.clone(), self.inumber)
+
+        &mut self.inode
     }
     pub fn save_inode(&mut self) -> bool {
         let this = self as *mut Self;
         unsafe {
             let mut inode = (*this).get_inode();
             inode.save();
-            inode.save_data_blocks(&self.data_blocks);
+            // inode.save_data_blocks(&self.data_blocks);
+            inode.save_data_blocks();
         }
         true
     }
@@ -749,8 +1029,11 @@ impl<'a> InodeReadIter<'a> {
     ) -> Self {
         let disc = disk.clone();
         let mut inode = InodeProxy::new(fs_meta_data, inode_table, disk.clone(), inumber);
+        // let direct_pointers = inode.to_direct_pointers();
         let direct_pointers = inode.to_direct_pointers();
         let mut curr_data_block = Block::new();
+
+        // println!("DATABLOCKS: {:?}", direct_pointers);
 
         if direct_pointers.len() > 0 {
             disk.read(direct_pointers[0] as usize, curr_data_block.data_as_mut());

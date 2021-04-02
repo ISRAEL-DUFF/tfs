@@ -307,41 +307,47 @@ impl<'a> FileSystem<'a> {
         let mut inode_list = InodeList::new(meta_dat, &mut inode_table, disc.clone());
         let i_list = &mut inode_list as *mut InodeList;
         let mut writer_iter = unsafe { (*i_list).write_iter(inumber) };
-        if !writer_iter.has_datablock() {
-            unsafe {
+        let writer_i = &mut writer_iter as *mut InodeWriteIter;
+        unsafe {
+            if !(*writer_i).has_datablock() {
                 let data_blk = (*fs_raw_ptr).allocate_free_block();
-                writer_iter.set_data_block(data_blk);
+                (*writer_i).set_data_block(data_blk);
             }
         }
 
         let write_bytes = |data: &mut [u8], fs_ptr: *mut Self| {
             let mut i = 0;
-            let mut writer = unsafe { (*i_list).write_iter(inumber) };
+            let mut w = unsafe { (*i_list).write_iter(inumber) };
+            let writer = &mut w as *mut InodeWriteIter;
 
             println!("Data Len: {}", data.len());
-
-            loop {
-                if i < data.len() {
-                    let r = writer.write_byte(data[i]);
-                    if r.1 < 0 {
-                        unsafe {
-                            let data_blk = (*fs_ptr).allocate_free_block();
-                            writer.add_data_blk(data_blk);
+            unsafe {
+                loop {
+                    if i < data.len() {
+                        let r = (*writer).write_byte(data[i]);
+                        if r.1 < 0 {
+                            println!("WWWW: {}", i);
+                            let mut data_blk = (*fs_ptr).allocate_free_block();
+                            while (*writer).add_data_blk(data_blk) > 0 {
+                                println!("Adding blocks");
+                                data_blk = (*fs_ptr).allocate_free_block();
+                            }
                             continue;
                         }
+                    } else {
+                        break
                     }
-                } else {
-                    break
+                    i += 1;
                 }
-                i += 1;
-            }
+            
 
-            // return i as i64;
+                // return i as i64;
 
-            if writer.flush() {
-                return i as i64
-            } else {
-                -1
+                if (*writer).flush() {
+                    return i as i64
+                } else {
+                    -1
+                }
             }
         };
 
@@ -655,6 +661,40 @@ mod tests {
         println!("bytes writen: {}, bytes read: {}", b1, b2);
     
         assert_eq!(str1, str2);
+
+    }
+
+    #[test]
+    fn test_inode_data() {
+        let mut disk = Disk::from_file("./data/image.250000", 250000);
+        let mut disk2 = disk.clone();
+        let mut fs = FileSystem::from_disk(&mut disk);
+        let mut inode_data = InodeDataPointer::new(&mut disk, 4);
+
+        let n = 1024 + 7000;
+        let depth = (((n - 5) as f64).log(POINTERS_PER_BLOCK as f64)).floor() as usize;
+
+        for i in 5..n {
+            let r = inode_data.add_data_block(i);
+            if r < 0 {
+                println!("Negative");
+            }
+
+            // if r > 0 {
+            //     println!("Value: {}", r);
+            // }
+        }
+
+        inode_data.debug();
+        inode_data.save();
+        assert_eq!(inode_data.indirect_ptrs.len(), depth);
+        assert!(inode_data.indirect_ptrs[0].len() > 0);
+        println!("indirect: {}", inode_data.indirect_ptrs[0].len());
+
+        let mut inode_data2 = InodeDataPointer::with_depth(depth, &mut disk2, 4);
+        assert_eq!(inode_data.indirect_ptrs.len(), inode_data2.indirect_ptrs.len());
+        assert_eq!(inode_data.indirect_ptrs[0].len(), inode_data2.indirect_ptrs[0].len());
+        assert_eq!(inode_data.indirect_ptrs[0][2], inode_data2.indirect_ptrs[0][2]);
 
     }
 }
