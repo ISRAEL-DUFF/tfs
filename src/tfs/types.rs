@@ -300,7 +300,7 @@ impl<'d> InodeDataPointer<'d> {
         for n in 1..level+1 {
             self = self.to_depth(n);
             // println!("In RESPS: {}, {:?}", n, self.direct_ptrs);
-            if n <= level {
+            if n < level {
                 let mut start = 0;
                 let mut end = POINTERS_PER_BLOCK;
                 loop {
@@ -383,6 +383,7 @@ impl<'d> InodeDataPointer<'d> {
                 block.pointers_as_mut()[i] = array[i];
                 i += 1;
             }
+            println!("fill_zeros: {:?}, {:?}", array, block.pointers());
             return block.data();
         };
 
@@ -410,7 +411,7 @@ impl<'d> InodeDataPointer<'d> {
 
         for i in 0..self.indirect_ptrs.len() {
             if i == 0 {
-                println!("This is really what it is");
+                println!("This is really what it is: {:?}", &mut fill_zeros(self.indirect_ptrs[0].as_slice()));
                 self.disk.write(self.root_ptr as usize, &mut fill_zeros(self.indirect_ptrs[0].as_slice()));
             } else {
                 unsafe {
@@ -424,8 +425,10 @@ impl<'d> InodeDataPointer<'d> {
         }
 
         if self.indirect_ptrs.len() == 0 {
-            // println!("DONE SND: {:?}", self.direct_ptrs);
-            self.disk.write(self.root_ptr as usize, &mut fill_zeros(self.direct_ptrs.as_slice()));
+            let mut tmp = &mut fill_zeros(self.direct_ptrs.as_slice());
+            println!("DONE SND: {}, {:?}, {:?}", self.root_ptr, self.direct_ptrs, tmp);
+            self.disk.write(self.root_ptr as usize, tmp);
+            println!("Last Line");
         }
     }
 
@@ -491,6 +494,19 @@ impl<'c> InodeProxy<'c> {
         println!("SEt data block called: {}", blk);
         self.data_manager = Some(
             InodeDataPointer::new(&mut self.disk, blk)
+        );
+    }
+
+    pub fn init_datablocks<'g:'c>(&'g mut self) {
+        if self.data_block() == 0 {
+            return
+        }
+        // println!("ManagerPointerLevel: {}", self.pointer_level());
+        let b = self.data_block();
+        let manager = InodeDataPointer::with_depth(self.pointer_level() as usize, &mut self.disk, b);
+        // println!("Manager: {:?}, {:?}", manager.direct_pointers(), manager.indirect_ptrs);
+        self.data_manager = Some(
+            manager
         );
     }
 
@@ -746,7 +762,7 @@ impl<'a> InodeWriteIter<'a> {
             // let mut inode3 = InodeProxy::new(&mut (*meta_data), &mut (*i_table), disk.clone(), inumber);
             // let disc = disk.clone();
             let data_blocks = inode2.to_direct_pointers();
-            //println!("DATABASL: {:?}", data_blocks);
+            // println!("DATABASL: {:?}", data_blocks);
             
             let mut i_write = InodeWriteIter {
                 inumber,
@@ -805,10 +821,12 @@ impl<'a> InodeWriteIter<'a> {
         }
     }
 
-    pub fn seek_to_end(mut self) -> Self {
+    pub fn seek_to_end<'f:'a>(mut self) -> Self {
         let this = &mut self as *mut Self;
         let inode = unsafe {(*this).get_inode()};
         let offset = inode.size() as usize;
+        inode.init_datablocks();
+
 
         self.data_block_index = (offset as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
         self.next_write_index = offset % Disk::BLOCK_SIZE;
@@ -1003,6 +1021,7 @@ impl<'a> InodeWriteIter<'a> {
             inode.save();
             // inode.save_data_blocks(&self.data_blocks);
             inode.save_data_blocks();
+            println!("INDO: {:?}", inode.data_blocks());
         }
         true
     }
@@ -1033,7 +1052,7 @@ impl<'a> InodeReadIter<'a> {
         let direct_pointers = inode.to_direct_pointers();
         let mut curr_data_block = Block::new();
 
-        // println!("DATABLOCKS: {:?}", direct_pointers);
+        println!("DATABLOCKS: {:?}", direct_pointers);
 
         if direct_pointers.len() > 0 {
             disk.read(direct_pointers[0] as usize, curr_data_block.data_as_mut());

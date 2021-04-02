@@ -112,6 +112,7 @@ impl<'a> Disk<'a> {
     }
 
     pub fn write<'c>(&mut self, blocknum: usize, data: &'c mut [u8]) {
+        println!("True for that: {}, {}", blocknum, self.size());
         self.sanity_check(blocknum);
         match self.file_descriptor.as_mut() {
             Some(file) => {

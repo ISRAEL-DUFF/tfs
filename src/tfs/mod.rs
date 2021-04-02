@@ -262,18 +262,18 @@ impl<'a> FileSystem<'a> {
         }
 
         
-        let mut i = 0;
-        inode_iter.seek(offset);
-        for byte in inode_iter {
-            if i < length {
-                data[i] = byte;
-                i += 1;
-            } else {
-                break
-            }
-        }
-        return i as i64
-        // return inode_iter.read_buffer(data, length)    
+        // let mut i = 0;
+        // inode_iter.seek(offset);
+        // for byte in inode_iter {
+        //     if i < length {
+        //         data[i] = byte;
+        //         i += 1;
+        //     } else {
+        //         break
+        //     }
+        // }
+        // return i as i64
+        return inode_iter.read_buffer(data, length)    
     }
 
     pub fn write(&mut self, inumber: usize, data: &mut [u8], length: usize, offset: usize) -> i64 {
@@ -351,62 +351,64 @@ impl<'a> FileSystem<'a> {
             }
         };
 
-        // let mut block_aligned = false;
-        // let mut n_bytes_writen = 0;
+        let mut block_aligned = false;
+        let mut n_bytes_writen = 0;
 
-        // let (aligned, n_bytes) = writer_iter.align_to_block(&mut data[offset..]);
-        // let mut bytes_writen = 0;
+        let (aligned, n_bytes) = writer_iter.align_to_block(&mut data[offset..]);
+        let mut bytes_writen = 0;
         
-        // block_aligned = aligned;
-        // n_bytes_writen = n_bytes;
-        // if block_aligned {
-        //     let n_blocks = (length as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
-        //     let mut i  = 0;
-        //     let mut start = offset + n_bytes_writen as usize;
-        //     let mut end = start + Disk::BLOCK_SIZE;
-        //     bytes_writen += n_bytes_writen;
-        //     loop {
-        //         if end > data.len() && (bytes_writen as usize) < length  {
-        //             end = data.len();
-        //             writer_iter.flush();
-        //             bytes_writen += write_bytes(&mut data[start..end], fs_raw_ptr);
-        //             break
-        //         }
+        block_aligned = aligned;
+        n_bytes_writen = n_bytes;
+        if block_aligned {
+            let n_blocks = (length as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
+            let mut i  = 0;
+            let mut start = offset + n_bytes_writen as usize;
+            let mut end = start + Disk::BLOCK_SIZE;
+            bytes_writen += n_bytes_writen;
+            loop {
+                if end > data.len() && (bytes_writen as usize) < length  {
+                    end = data.len();
+                    unsafe {(*writer_i).flush()};
+                    bytes_writen += write_bytes(&mut data[start..end], fs_raw_ptr);
+                    break
+                }
 
-        //         if end > length && (bytes_writen as usize) < length {
-        //             end = length;
-        //             writer_iter.flush();
-        //             let  b = write_bytes(&mut data[start..end], fs_raw_ptr);
-        //             bytes_writen += b;
-        //             break
-        //         }
+                if end > length && (bytes_writen as usize) < length {
+                    end = length;
+                    unsafe {(*writer_i).flush()};
+                    let  b = write_bytes(&mut data[start..end], fs_raw_ptr);
+                    bytes_writen += b;
+                    break
+                }
 
-        //         if i == n_blocks {
-        //             writer_iter.flush();
-        //             if (bytes_writen as usize) < length {
-        //                 bytes_writen += write_bytes(&mut data[start..end], fs_raw_ptr);
-        //             }
-        //             break
-        //         }
+                if i == n_blocks {
+                    // writer_iter.flush();
+                    unsafe {(*writer_i).flush()};
+                    if (bytes_writen as usize) < length {
+                        bytes_writen += write_bytes(&mut data[start..end], fs_raw_ptr);
+                    }
+                    break
+                }
 
-        //         unsafe {
-        //             let success = writer_iter.write_block((*fs_raw_ptr).allocate_free_block(), &mut data[start..end]);
-        //             if !success {
-        //                 break
-        //             }
-        //         }
+                unsafe {
+                    let success = (*writer_i).write_block((*fs_raw_ptr).allocate_free_block(), &mut data[start..end]);
+                    println!("REs HERE: {}, {}, {}", success, start, end);
+                    if !success {
+                        break
+                    }
+                }
 
-        //         start = end;
-        //         end = start + Disk::BLOCK_SIZE;
-        //         i += 1;
-        //         bytes_writen += Disk::BLOCK_SIZE as i64;
-        //     }
+                start = end;
+                end = start + Disk::BLOCK_SIZE;
+                i += 1;
+                bytes_writen += Disk::BLOCK_SIZE as i64;
+            }
 
-        //     return bytes_writen as i64;
-        // }
-        // -1
+            return bytes_writen as i64;
+        }
+        -1
 
-        return write_bytes(&mut data[offset..(offset+length)], fs_raw_ptr);
+        // return write_bytes(&mut data[offset..(offset+length)], fs_raw_ptr);
     }
 
     // ****************** helper methods and functions *******************
