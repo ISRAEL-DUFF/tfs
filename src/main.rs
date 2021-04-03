@@ -4,7 +4,6 @@ use std::io::SeekFrom;
 use std::io::prelude::*;
 use std::error::Error;
 use disk::prelude::*;
-use disk::FileSystem;
 
 fn main() {
     let args: Vec<String> = env::args().collect();

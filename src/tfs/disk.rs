@@ -12,7 +12,7 @@ pub struct Disk<'a> {
     reads: usize,   // Number of reads performed
     writes: usize,  // Number of writes performed
     mounts: usize,  // Number of mounts
-    path: &'a str  // file path for the disk
+    pub path: &'a str  // file path for the disk
 }
 
 impl<'a> Disk<'a> {
@@ -112,7 +112,6 @@ impl<'a> Disk<'a> {
     }
 
     pub fn write<'c>(&mut self, blocknum: usize, data: &'c mut [u8]) {
-        println!("True for that: {}, {}", blocknum, self.size());
         self.sanity_check(blocknum);
         match self.file_descriptor.as_mut() {
             Some(file) => {
