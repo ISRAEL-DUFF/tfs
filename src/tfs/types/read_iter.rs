@@ -8,8 +8,9 @@ pub struct InodeReadIter<'a> {
     inode_table: &'a mut Vec<(u32, InodeBlock)>,
     fs_meta_data: &'a mut MetaData,
     pub inumber: usize,
+    pub inode: InodeProxy<'a>,
     pub disk: Disk<'a>,
-    pub data_blocks: Vec<u32>,
+    // pub data_blocks: Vec<u32>,
     pub curr_data_block: Block,
     pub curr_block_index: usize,
     pub byte_offset: usize
@@ -21,32 +22,48 @@ impl<'a> InodeReadIter<'a> {
         inode_table: &'a mut Vec<(u32, InodeBlock)>,
         mut disk: Disk<'a>
     ) -> Self {
-        let disc = disk.clone();
-        let mut inode = InodeProxy::new(fs_meta_data, inode_table, disk.clone(), inumber);
-        // let direct_pointers = inode.to_direct_pointers();
-        let direct_pointers = inode.to_direct_pointers();
-        let mut curr_data_block = Block::new();
+        let i_table = inode_table as *mut Vec<(u32, InodeBlock)>;
+        let meta_data = fs_meta_data as *mut MetaData;
 
-        println!("DATABLOCKS: {:?}", direct_pointers);
+        unsafe {
+            let disc = disk.clone();
+            let mut inode = InodeProxy::new(&mut (*meta_data), &mut (*i_table), disk.clone(), inumber);
 
-        if direct_pointers.len() > 0 {
-            disk.read(direct_pointers[0] as usize, curr_data_block.data_as_mut());
-        }
+            // let direct_pointers = inode.to_direct_pointers();
+            // let direct_pointers = inode.data_blocks();
+            let mut curr_data_block = Block::new();
 
-        InodeReadIter {
-            fs_meta_data,
-            inode_table,
-            inumber,
-            disk,
-            data_blocks: direct_pointers,
-            curr_data_block,
-            curr_block_index: 0,
-            byte_offset: 0
+            // println!("DATABLOCKS: {:?}", direct_pointers);
+            let inod = &mut inode as *mut InodeProxy;
+
+            // if inode2.data_blocks().len() > 0 {
+            //     disk.read(inode2.data_blocks()[0] as usize, curr_data_block.data_as_mut());
+            // }
+
+            unsafe {
+                if (*inod).data_blocks().len() > 0 {
+                    disk.read((*inod).data_blocks()[0] as usize, curr_data_block.data_as_mut());
+                }    
+            }
+
+            InodeReadIter {
+                fs_meta_data,
+                inode_table,
+                inumber,
+                inode,
+                disk,
+                // data_blocks: direct_pointers,
+                curr_data_block,
+                curr_block_index: 0,
+                byte_offset: 0
+            }
         }
     }
 
-    pub fn seek(&mut self, offset: usize) {
-        if offset as u32 <= self.get_inode().size() {
+    pub fn seek<'f: 'a>(&'f mut self, offset: usize) {
+        let this = self as *mut Self;
+        let size = unsafe {(*this).get_inode().size()};
+        if offset as u32 <= size {
             self.byte_offset = offset;
         }
     }
@@ -72,7 +89,7 @@ impl<'a> InodeReadIter<'a> {
         (true, i as i64)
     }
 
-    pub fn read_buffer(&mut self, block_data: &mut [u8], length: usize) -> i64 {
+    pub fn read_buffer<'g:'a>(&'g mut self, block_data: &mut [u8], length: usize) -> i64 {
         let mut read_len = length; //block_data.len();
         let (success, num_bytes) = self.align_to_block(&mut block_data[..]);
         if !success {
@@ -84,15 +101,20 @@ impl<'a> InodeReadIter<'a> {
         let num_blocks = (read_len as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
         let block_offset = (self.byte_offset as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
 
+        // let disk = &self.disk;
+        // let byte_offset = &se
+        let this = self as *mut Self;
+        let data_blocks = unsafe{(*this).get_inode().data_blocks()};
+
         let mut i = 0;  // i = 0, 1, 2, 3, 4, ... num_blocks
         let mut start = num_bytes as usize;
         let mut end = start + Disk::BLOCK_SIZE;
         loop {
-            if block_offset + i >= self.data_blocks.len() || i == num_blocks {
+            if block_offset + i >= data_blocks.len() || i == num_blocks {
                 // println!("This is me: {}, {}, {}, {}", num_blocks, block_offset, i, self.data_blocks.len());
                 break
             }
-            let blk_num = self.data_blocks[block_offset + i];
+            let blk_num = data_blocks[block_offset + i];
             if blk_num > 0 {
                 self.disk.read(blk_num as usize, &mut block_data[start..end]);
                 start = end;
@@ -125,9 +147,10 @@ impl<'a> InodeReadIter<'a> {
         bytes_read as i64
     }
 
-    pub fn get_inode(&mut self) -> InodeProxy {
+    pub fn get_inode<'f: 'a>(&'f mut self) -> &'f mut InodeProxy {
         // change this implementation to look like the one for write
-        InodeProxy::new(self.fs_meta_data, self.inode_table, self.disk.clone(), self.inumber)
+        // InodeProxy::new(self.fs_meta_data, self.inode_table, self.disk.clone(), self.inumber)
+        &mut self.inode
     }
 }
 
@@ -135,7 +158,9 @@ impl<'a> InodeReadIter<'a> {
 impl<'a> Iterator for InodeReadIter<'a> {
     type Item = u8;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.byte_offset as u32 == self.get_inode().size() {
+        let this = self as *mut Self;
+        if self.byte_offset as u32 == unsafe { (*this).get_inode().size()} {
+            println!("byte offset: {}, size: {}", self.byte_offset, unsafe { (*this).get_inode().size()});
             return None
         }
 
@@ -148,17 +173,21 @@ impl<'a> Iterator for InodeReadIter<'a> {
                 self.curr_data_block.data()[block_offset]
             )
         }
+
+        let data_blocks = unsafe { (*this).get_inode().data_blocks()};
         
-        if block_index < self.data_blocks.len() && self.data_blocks[block_index] > 0 {
+        if block_index < data_blocks.len() && data_blocks[block_index] > 0 {
             let mut block = Block::new();
-            self.disk.read(self.data_blocks[block_index] as usize, block.data_as_mut());
+            self.disk.read(data_blocks[block_index] as usize, block.data_as_mut());
             self.curr_data_block = block;
             self.curr_block_index += 1;
             self.byte_offset += 1;
             return Some(
                 self.curr_data_block.data()[block_offset]
             )
+        } else {
+            println!("End: {}", data_blocks.len());
+            None
         }
-        None
     }
 }

@@ -203,24 +203,27 @@ impl<'a> InodeWriteIter<'a> {
         (true, m as i64)
     }
 
-    pub fn write_block<'h: 'a>(&'h mut self, block_num: i64, block_data: &mut [u8]) -> bool {
+    pub fn write_block<'h: 'a>(&'h mut self, block_num: i64, block_data: &mut [u8]) -> i64 {
         if block_num < 0  || !self.aligned_to_block {
-            return false
+            return -1
         }
         if block_data.len() < Disk::BLOCK_SIZE {
-            return false
+            return -1
         }
 
-        if self.add_data_blk(block_num) < 0 {
-            return false
+        let r = self.add_data_blk(block_num);
+
+        if r != 0 {
+            return r
         }
+
         self.disk.write(block_num as usize, block_data);
         self.aligned_to_block = true;
 
         let mut inode = self.get_inode();
         inode.incr_size(Disk::BLOCK_SIZE);
         // inode.save();
-        true
+        0
     }
 
     pub fn flush(&mut self) -> bool {
@@ -235,6 +238,7 @@ impl<'a> InodeWriteIter<'a> {
                     (*this).disk.write(self.data_block_num as usize, self.curr_data_block.data_as_mut());
                     (*this).get_inode().incr_size(self.next_write_index);
                     // println!("Wrote to block: {}", self.data_block_num);
+                    println!("DATABlooooKs :{:?}", data_blocks.len());
                  } 
                 
                 if (*this).next_write_index == Disk::BLOCK_SIZE {
@@ -264,7 +268,7 @@ impl<'a> InodeWriteIter<'a> {
                 self.data_block_num = new_blk as u32;
                 self.next_write_index = 0;
                 self.curr_data_block = Block::new();
-
+                println!("RETun: {}", r);
                 return r;
             }
         } else {

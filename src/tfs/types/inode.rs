@@ -34,7 +34,7 @@ impl Inode {
             size: 0,
             atime: 0,
             ctime: 0,
-            blk_pointer_level: 1,  // start from direct pointers
+            blk_pointer_level: 0,  // start from direct pointers
             level_index: 0,
             total_data_blocks: 0,
             data_block: 0
@@ -118,7 +118,8 @@ impl<'c> InodeProxy<'c> {
                 data_manager
             },
             _ => {
-                let manager = InodeDataPointer::new(self.disk.clone(), unsafe{(*this).data_block()});
+                // let manager = InodeDataPointer::new(self.disk.clone(), unsafe{(*this).data_block()});
+                let manager = InodeDataPointer::with_depth(self.pointer_level() as usize, self.disk.clone(), unsafe{(*this).data_block()});
                unsafe{ (*this).data_manager = Some(manager); }
                 match &self.data_manager {
                     Some(m) => m,
@@ -168,7 +169,7 @@ impl<'c> InodeProxy<'c> {
        let data_manager = match &mut self.data_manager {
             Some(data_manager) => {
                 data_manager
-            },
+            }, 
             _ => {
                 let manager = InodeDataPointer::new(self.disk.clone(), unsafe{(*this).data_block()});
                 self.data_manager = Some(
@@ -182,10 +183,14 @@ impl<'c> InodeProxy<'c> {
         };
 
         let r = data_manager.add_data_block(blk);
-        let d = (data_manager.depth() + 1 ) as u32;
+        let d = data_manager.depth() as u32;
         let (i, j) = unsafe {(*this).get_index()};
         self.inode_table[i].1.inodes[j].blk_pointer_level = d;
-        unsafe{(*this).incr_data_blocks(1)};
+        if r == 0 {
+            unsafe{(*this).incr_data_blocks(1)};
+        } else {
+            println!("Depth: {}, result: {}", d, r);
+        }
         return r;
     }
 
