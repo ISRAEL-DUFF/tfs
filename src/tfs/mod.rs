@@ -259,20 +259,20 @@ impl<'a> FileSystem<'a> {
         }
 
         
-        let mut i = 0;
         let i_iter = &mut inode_iter as *mut InodeReadIter;
         unsafe{(*i_iter).seek(offset)};
-        for byte in inode_iter {
-            if i < length {
-                data[i] = byte;
-                i += 1;
-            } else {
-                break
-            }
-        }
-        println!("returned i: {}", i);
-        return i as i64
-        // return inode_iter.read_buffer(data, length)    
+        // let mut i = 0;
+        // for byte in inode_iter {
+        //     if i < length {
+        //         data[i] = byte;
+        //         i += 1;
+        //     } else {
+        //         break
+        //     }
+        // }
+        // println!("returned i: {}", i);
+        // return i as i64
+        return inode_iter.read_buffer(data, length)    
     }
 
     pub fn write(&mut self, inumber: usize, data: &mut [u8], length: usize, offset: usize) -> i64 {
