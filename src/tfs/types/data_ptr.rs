@@ -63,7 +63,6 @@ impl<'d> InodeDataPointer<'d> {
                     }
                     self.disk.read(*blk as usize, data_blks.data_as_mut());
                     let i = index_zero(data_blks.pointers());
-                    // println!("Index z: {}, {}, {:?}", i, *blk, data_blks.pointers());
                     data_blocks.extend_from_slice(&data_blks.pointers()[..i]);
                 }
                 self.direct_ptrs = data_blocks;
@@ -76,7 +75,6 @@ impl<'d> InodeDataPointer<'d> {
     pub fn set_depth(mut self, level: usize) -> Self {
         for n in 0..level+1 {
             self = self.to_depth(n);
-            // println!("In RESPS: {}, {:?}", n, self.direct_ptrs);
             if n < level {
                 let mut start = 0;
                 let mut end = POINTERS_PER_BLOCK;
@@ -149,7 +147,6 @@ impl<'d> InodeDataPointer<'d> {
                 }
             }
             self.direct_ptrs.push(blk as u32);
-            println!("Direct: {:?}", self.direct_ptrs.len());
             return 0;
         } else {
             return -1;
@@ -159,7 +156,6 @@ impl<'d> InodeDataPointer<'d> {
     pub fn save(&mut self) {
         let this = self as *mut Self;
         let fill_zeros = |array: &[u32]| {
-            // println!("ARRaY: {:?}", array);
             let mut i = 0;
             let mut block = Block::new();
             loop {
@@ -200,7 +196,6 @@ impl<'d> InodeDataPointer<'d> {
             if i == 0 {
                 self.disk.write(self.root_ptr as usize, &mut fill_zeros(self.indirect_ptrs[0].as_slice()));
                 unsafe {
-                    //println!("Check: {:?}", self.direct_ptrs);
                     write_disk(&mut (*this).indirect_ptrs[0], &mut self.direct_ptrs, self.disk.clone());
                 }
             } else {

@@ -395,15 +395,15 @@ impl<'a> FileSystem<'a> {
                     let blk = (*fs_raw_ptr).allocate_free_block();
                     let r = (*writer_i).write_block(blk, &mut data[start..end]);
                     if r > 0 {
-                        let mut data_blk = (*fs_raw_ptr).allocate_free_block();
-                        loop {
-                            println!("*********** Adding blocks 2**************");
-                            if (*writer_i).add_data_blk(data_blk) > 0 {
-                                data_blk = (*fs_raw_ptr).allocate_free_block();
-                            } else {
-                                break;
-                            }
-                        }
+                        // let mut data_blk = (*fs_raw_ptr).allocate_free_block();
+                        // loop {
+                        //     println!("*********** Adding blocks 2**************");
+                        //     if (*writer_i).add_data_blk(data_blk) > 0 {
+                        //         data_blk = (*fs_raw_ptr).allocate_free_block();
+                        //     } else {
+                        //         break;
+                        //     }
+                        // }
                         continue;
                     } else if r < 0 {
                         break

@@ -118,7 +118,6 @@ impl<'c> InodeProxy<'c> {
                 data_manager
             },
             _ => {
-                // let manager = InodeDataPointer::new(self.disk.clone(), unsafe{(*this).data_block()});
                 let manager = InodeDataPointer::with_depth(self.pointer_level() as usize, self.disk.clone(), unsafe{(*this).data_block()});
                unsafe{ (*this).data_manager = Some(manager); }
                 match &self.data_manager {
@@ -143,15 +142,16 @@ impl<'c> InodeProxy<'c> {
         );
     }
 
-    pub fn init_datablocks<'g:'c>(&'g mut self) {
+    pub fn init_datablocks<'g:'c>(&'g mut self) -> bool {
         if self.data_block() == 0 {
-            return
+            return false;
         }
         let b = self.data_block();
         let manager = InodeDataPointer::with_depth(self.pointer_level() as usize, self.disk.clone(), b);
         self.data_manager = Some(
             manager
         );
+        true
     }
 
     pub fn incr_size(&mut self, amount: usize) {
@@ -188,8 +188,6 @@ impl<'c> InodeProxy<'c> {
         self.inode_table[i].1.inodes[j].blk_pointer_level = d;
         if r == 0 {
             unsafe{(*this).incr_data_blocks(1)};
-        } else {
-            println!("Depth: {}, result: {}", d, r);
         }
         return r;
     }
@@ -205,80 +203,6 @@ impl<'c> InodeProxy<'c> {
         true
     }
 
-
-    // pub fn save_data_blocks(&mut self, data_blocks: &Vec<u32>) {
-    //     // println!("Pointer Data Block: {}, level: {}, {}", self.data_block(), self.pointer_level(), data_blocks.len());
-    //     let root_block = fetch_block(&mut self.disk.clone(), self.data_block() as usize);
-    //     match self.pointer_level() {
-    //         1 => {
-    //             // println!("1st level");
-    //             let mut i = 0;
-    //             let mut direct_pointers = Block::new();
-    //             for j in 0..root_block.pointers().len() {
-    //                 if i < data_blocks.len() && data_blocks[i] > 0 {
-    //                     direct_pointers.pointers_as_mut()[j as usize] = data_blocks[i];
-    //                     i += 1;
-    //                 } else {
-    //                     break
-    //                 }
-    //             }
-    //             if self.data_block() > 0 {
-    //                 self.disk.write(self.data_block() as usize, direct_pointers.data_as_mut());
-    //             }
-    //         },
-    
-    //         2 => {
-    //             // println!("2nd level");
-    //             let mut i = 0;
-    //             for ptr1 in root_block.pointers().iter() {
-    //                 if *ptr1 > 0 {
-    //                     let mut direct_pointers = Block::new();
-    //                     for j in 0..POINTERS_PER_BLOCK {
-    //                         if i < data_blocks.len() {
-    //                             direct_pointers.pointers_as_mut()[j] = data_blocks[i];
-    //                             i += 1;
-    //                         } else {
-    //                             break
-    //                         }
-    //                     }
-    //                     self.disk.write(*ptr1 as usize, direct_pointers.data_as_mut());
-    //                 } else {
-    //                     break
-    //                 }
-    //             }
-    //         },
-    
-    //         3 => {
-    //             let mut i = 0;
-    //             for ptr1 in root_block.pointers().iter() {
-    //                 if *ptr1 > 0 {
-    //                     let root_2_blocks = fetch_block(&mut self.disk, *ptr1 as usize);
-    //                     for ptr2 in root_2_blocks.pointers().iter() {
-    //                         if *ptr2 > 0 {
-    //                             let mut direct_pointers = Block::new();
-    //                             for j in 0..POINTERS_PER_BLOCK {
-    //                                 if i < data_blocks.len() {
-    //                                     direct_pointers.pointers_as_mut()[j] = data_blocks[i];
-    //                                     i += 1;
-    //                                 } else {
-    //                                     break
-    //                                 }
-    //                             }
-    //                             self.disk.write(*ptr2 as usize, direct_pointers.data_as_mut());
-    //                         } else {
-    //                             break
-    //                         }
-    //                     }
-    //                 } else {
-    //                     break
-    //                 }
-    //             }
-    //         },
-    
-    //         _ => {}
-    //     }
-    // }
-
     pub fn save_data_blocks(&mut self) {
         match &mut self.data_manager {
             Some(data_manager) => {
@@ -287,77 +211,6 @@ impl<'c> InodeProxy<'c> {
             _ => {}
         };
     }
-
-    // fn to_direct_pointers(&mut self) -> Vec<u32> {
-    //     let data_block = self.data_block();
-    //     let index_zero = |array: [u32; POINTERS_PER_BLOCK]| {
-    //         let mut i = 0;
-    //         loop {
-    //             if i == array.len() || array[i] == 0 {
-    //                 break
-    //             }
-    //             i += 1;
-    //         }
-    //         i
-    //     };
-    //     match self.pointer_level() {
-    //         1 => {  // single indirect pointers
-    //             if data_block == 0 {
-    //                 return vec![]
-    //             }
-    //             let mut block = Block::new();
-    //             self.disk.read(self.data_block() as usize, block.data_as_mut());
-    //             let i = index_zero(block.pointers());
-    //             Vec::from(&block.pointers()[0..i])
-    //         },
-    //         2 => {
-    //             if data_block == 0 {
-    //                 return vec![]
-    //             }
-    //             let mut block = Block::new();
-    //             self.disk.read(self.data_block() as usize, block.data_as_mut());
-
-    //             let mut data_blks = Block::new();
-    //             let mut data_blocks = Vec::new();
-    //             for blk in block.pointers().iter() {
-    //                 if *blk == 0 {
-    //                     break
-    //                 }
-    //                 self.disk.read(*blk as usize, data_blks.data_as_mut());
-    //                 let i = index_zero(data_blks.pointers());
-    //                 data_blocks.extend_from_slice(&data_blks.pointers()[..i]);
-    //             }
-    //             data_blocks
-    //         },
-    //         3 => {
-    //             if data_block == 0 {
-    //                 return vec![]
-    //             }
-    //             let mut block = Block::new();
-    //             self.disk.read(self.data_block() as usize, block.data_as_mut());
-
-    //             let mut data_blks_1 = Block::new();
-    //             let mut data_blks_2 = Block::new();
-    //             let mut data_blocks = Vec::new();
-    //             for blk in block.pointers().iter() {
-    //                 if *blk == 0 {
-    //                     break
-    //                 }
-    //                 self.disk.read(*blk as usize, data_blks_1.data_as_mut());
-    //                 for b in data_blks_1.pointers().iter() {
-    //                     if *b == 0 {
-    //                         break
-    //                     }
-    //                     self.disk.read(*b as usize, data_blks_2.data_as_mut());
-    //                     let i = index_zero(data_blks_2.pointers());
-    //                     data_blocks.extend_from_slice(&data_blks_2.pointers()[..i]);
-    //                 }
-    //             }
-    //             data_blocks
-    //         },
-    //         _ => vec![]
-    //     }
-    // }
 
     pub fn to_direct_pointers<'g:'c>(&'g mut self) -> Vec<u32> {
         let b = self.data_block();
