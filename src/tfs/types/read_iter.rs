@@ -143,7 +143,7 @@ impl<'a> Iterator for InodeReadIter<'a> {
     type Item = u8;
     fn next(&mut self) -> Option<Self::Item> {
         let this = self as *mut Self;
-        if self.byte_offset as u32 == unsafe { (*this).get_inode().size()} {
+        if self.byte_offset as u64 == unsafe { (*this).get_inode().size()} {
             return None
         }
 

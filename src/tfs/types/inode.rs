@@ -9,7 +9,7 @@ use crate::tfs::utility::*;
 #[allow(dead_code)]
 pub struct Inode {
     pub valid: u32, // whether or not inode is valid (or allocated)
-    pub size: u32,  // size of file
+    pub size: u64,  // size of file
     pub ctime: u32,
     pub atime: u32,
     pub blk_pointer_level: u32, // level 1 = direct, level 2 = single_indirect, level 3 = double_indirect etc.
@@ -101,7 +101,7 @@ impl<'c> InodeProxy<'c> {
         (inode_block_index, inode_index)
     }
 
-    pub fn size(&self) -> u32 {
+    pub fn size(&self) -> u64 {
         let (i, j) = self.get_index();
         self.inode_table[i].1.inodes[j].size
     }
@@ -156,7 +156,7 @@ impl<'c> InodeProxy<'c> {
 
     pub fn incr_size(&mut self, amount: usize) {
         let (i, j) = self.get_index();
-        self.inode_table[i].1.inodes[j].size += amount as u32;
+        self.inode_table[i].1.inodes[j].size += amount as u64;
     }
 
     pub fn incr_data_blocks(&mut self, amount: usize) {

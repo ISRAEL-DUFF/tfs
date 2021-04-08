@@ -7,7 +7,6 @@ use crate::tfs::utility::*;
 pub struct InodeDataPointer<'d> {
     pub direct_ptrs: Vec<u32>,
     pub indirect_ptrs: Vec<Vec<u32>>,    // the len of indirect_ptrs = depth
-    // disk: &'d mut Disk<'d>,
     disk: Disk<'d>,
     pub root_ptr: u32
 }
@@ -78,18 +77,23 @@ impl<'d> InodeDataPointer<'d> {
             if n < level {
                 let mut start = 0;
                 let mut end = POINTERS_PER_BLOCK;
+                let mut ptrs = Vec::new();
                 loop {
                     if end >= self.direct_pointers().len() {
                         end = self.direct_pointers().len();
-                        self.indirect_ptrs.push(Vec::from(&self.direct_pointers()[start..end]));
+                        ptrs.extend_from_slice(&self.direct_pointers()[start..end]);
                         break
                     }
-                    self.indirect_ptrs.push(Vec::from(&self.direct_pointers()[start..end]));
+                    ptrs.extend_from_slice(&self.direct_pointers()[start..end]);
                     start = end;
                     end = start + POINTERS_PER_BLOCK;
                 }
+                if ptrs.len() > 0 {
+                    self.indirect_ptrs.push(ptrs);
+                }
             }
         }
+        self.indirect_ptrs.reverse();
         self
     }
 
@@ -112,6 +116,7 @@ impl<'d> InodeDataPointer<'d> {
 
             // get highest depth
             let mut depth = self.depth();
+            let dd = depth;
             
             // get the positions at the different depths
             let mut depth_pos = vec![];
@@ -124,12 +129,11 @@ impl<'d> InodeDataPointer<'d> {
                     break
                 }
             }
-
+           
             if self.indirect_ptrs.len() < depth_pos.len() {
                 // increase depth / level
-                println!("INCREASED DEPTH");
                 self.indirect_ptrs.push(vec![blk as u32]);
-                return self.indirect_ptrs.len() as i64;
+                return (self.indirect_ptrs.len() + 1) as i64;
             }
 
             let mut d = 0;
@@ -137,7 +141,8 @@ impl<'d> InodeDataPointer<'d> {
             loop {
                 if d < n {
                     let i = n - d - 1;
-                    if self.indirect_ptrs[i].len() < depth_pos[d] + 1 {
+                    let k = ptrs % POINTERS_PER_BLOCK;
+                    if k == 0 && self.indirect_ptrs[i].len() == depth_pos[d] {
                         self.indirect_ptrs[i].push(blk as u32);
                         return (i + 1) as i64;
                     }
@@ -193,18 +198,14 @@ impl<'d> InodeDataPointer<'d> {
         self.indirect_ptrs.reverse();   // temporarily reverse the list
 
         for i in 0..self.indirect_ptrs.len() {
-            if i == 0 {
-                self.disk.write(self.root_ptr as usize, &mut fill_zeros(self.indirect_ptrs[0].as_slice()));
-                unsafe {
-                    write_disk(&mut (*this).indirect_ptrs[0], &mut self.direct_ptrs, self.disk.clone());
-                }
-            } else {
-                unsafe {
+            unsafe {
+                if i == 0 {
+                    self.disk.write(self.root_ptr as usize, &mut fill_zeros(self.indirect_ptrs[0].as_slice()));
+                } else {
                     write_disk(&mut (*this).indirect_ptrs[i - 1], &mut self.indirect_ptrs[i], self.disk.clone());
-
-                    if i + 1 == self.indirect_ptrs.len() {
-                        write_disk(&mut (*this).indirect_ptrs[i], &mut self.direct_ptrs, self.disk.clone());
-                    }
+                }
+                if i + 1 == self.indirect_ptrs.len() {
+                    write_disk(&mut (*this).indirect_ptrs[i], &mut self.direct_ptrs, self.disk.clone());
                 }
             }
         }
@@ -215,6 +216,8 @@ impl<'d> InodeDataPointer<'d> {
         }
 
         self.indirect_ptrs.reverse(); // reverse to what it was before... 
+
+        // println!("Details saved: depth: {}, indirect -> {}, direct -> {}", self.depth(), self.indirect_ptrs.len(), self.direct_ptrs.len());
     }
 
 }

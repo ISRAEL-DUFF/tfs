@@ -9,7 +9,6 @@ pub struct InodeWriteIter<'a> {
     inode: InodeProxy<'a>,
     disk: Disk<'a>,
     buffer: [u8; Disk::BLOCK_SIZE],
-    // data_blocks: Vec<u32>,
     curr_data_block: Block,
     data_block_num: u32,
     data_block_index: usize,
@@ -51,7 +50,7 @@ impl<'a> InodeWriteIter<'a> {
     pub fn seek<'h: 'a>(&'h mut self, offset: usize) {
         let this = self as *mut Self;
         let inode = unsafe {(*this).get_inode()};
-        if offset as u32 > inode.size() {
+        if offset as u64 > inode.size() {
             let offset = inode.size();
         }
         let data_blocks = inode.data_blocks();
@@ -162,7 +161,6 @@ impl<'a> InodeWriteIter<'a> {
 
         let n = Disk::BLOCK_SIZE - self.next_write_index;
         if block_data.len() < n {
-            // println!("Tow: {}, {}", n, block_data.len());
             return (false, -1)
         }
         let this = self as *mut Self;
@@ -235,7 +233,6 @@ impl<'a> InodeWriteIter<'a> {
             let this = self as *mut Self;
             unsafe {
                 let mut inode = (*this).get_inode();
-                // (*this).data_blocks.push(new_blk as u32); // not needed again
                 let r = inode.add_data_block(new_blk);
                 self.data_block_num = new_blk as u32;
                 self.next_write_index = 0;

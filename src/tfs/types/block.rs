@@ -18,7 +18,7 @@ pub struct InodeBlock {
     pub inodes: [Inode; INODES_PER_BLOCK - 1],
     pub next_block: u32,  // 4 bytes +
     pub prev_block: u32,  // 4 bytes +
-    pub temp: [u32; 6]   //  6 * 4 = 32 bytes => size of 1 Inode
+    pub temp: [u32; 14]   //  14 * 4 = 32 bytes => size of 1 Inode
 }
 
 #[derive(Copy, Clone)]
