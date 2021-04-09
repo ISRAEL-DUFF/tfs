@@ -25,6 +25,38 @@ pub fn set_inode(inode_table: &mut Vec<(u32, InodeBlock)>, inumber: usize, inode
     inode_table[index] = (blk_n, block.inode_block());
 }
 
+pub fn resolve_attr<'a>(
+    fs: &'a mut FileSystem
+) -> Option<(&'a mut MetaData, &'a Disk<'a>, &'a mut Vec<(u32, InodeBlock)>)> {
+    let fs_raw_ptr = fs as *mut FileSystem;
+
+    let meta_dat =  unsafe {
+        match &mut (*fs_raw_ptr).meta_data {
+            Some(meta_data) => meta_data,
+            _ => {
+                return None;
+            }
+        }
+    };
+
+    let disc = match &fs.disk {
+        Some(disk) => disk,
+        _ => {
+            return None;
+        }
+    };
+
+    let mut inode_table = unsafe {
+        match &mut (*fs_raw_ptr).inode_table {
+            Some(itable) => itable,
+            _ => {
+                return None;
+            }
+        }
+    };
+    Some((meta_dat, disc, inode_table))
+}
+
 pub fn as_u32_be(array: &[u8; 4]) -> u32 {
     ((array[0] as u32) << 24) +
     ((array[1] as u32) << 16) +

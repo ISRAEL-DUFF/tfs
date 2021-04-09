@@ -116,7 +116,6 @@ impl<'d> InodeDataPointer<'d> {
 
             // get highest depth
             let mut depth = self.depth();
-            let dd = depth;
             
             // get the positions at the different depths
             let mut depth_pos = vec![];

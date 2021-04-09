@@ -41,6 +41,19 @@ impl Inode {
         }
     }
 
+    pub fn new() -> Self {
+        Inode {
+            valid: 0,
+            size: 0,
+            atime: 0,
+            ctime: 0,
+            blk_pointer_level: 0,  // start from direct pointers
+            level_index: 0,
+            total_data_blocks: 0,
+            data_block: 0
+        }
+    }
+
     pub fn increase_level(&mut self) -> bool {
         match self.level_index {
             1 => { 
@@ -127,6 +140,10 @@ impl<'c> InodeProxy<'c> {
             }
         };
         &data_manager.direct_pointers()
+    }
+
+    pub fn data_manager<'d: 'c>(&'d self) -> Option<&'d InodeDataPointer> {
+        self.data_manager.as_ref()
     }
 
     pub fn pointer_level(&self) -> u32 {
@@ -220,5 +237,41 @@ impl<'c> InodeProxy<'c> {
         } else {
             Vec::new()
         }
+    }
+
+    pub fn deallocate_ptrs(mut self) -> Vec<u32> {
+        let this = &mut self as *mut Self;
+        let mut ptrs = vec![];
+        unsafe {(*this).init_datablocks()};
+
+        let (i, j) = self.get_index();
+        self.inode_table[i].1.inodes[j].data_block = 0;
+        self.inode_table[i].1.inodes[j].valid = 0;
+        self.inode_table[i].1.inodes[j].total_data_blocks = 0;
+        self.inode_table[i].1.inodes[j].blk_pointer_level = 0;
+        self.inode_table[i].1.inodes[j].size = 0;
+        unsafe {(*this).save()};
+        
+        match self.data_manager {
+            Some(manager) => {
+                // free root block
+                ptrs.push(manager.root_ptr);
+
+                // next, free indirect pointers
+                for ptr in manager.indirect_ptrs.iter() {
+                    for p in ptr.iter() {
+                        ptrs.push(*p);
+                    }
+                }
+
+                // free direct pointers
+                for ptr in manager.direct_ptrs.iter() {
+                    ptrs.push(*ptr);
+                }
+
+            },
+            _ => {}
+        };
+        ptrs
     }
 }

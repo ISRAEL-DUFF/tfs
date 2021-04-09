@@ -118,28 +118,11 @@ impl<'a> FileSystem<'a> {
     }
 
     pub fn create(&mut self) -> i64 {
-        let fs_raw_ptr = self as *mut Self;
-
-        let meta_dat =  unsafe {
-            match &mut (*fs_raw_ptr).meta_data {
-                Some(meta_data) => meta_data,
-                _ => {
-                    return -1;
-                }
-            }
-        };
-
-        let disc = match &self.disk {
-            Some(disk) => disk,
-            _ => {
-                return -1;
-            }
-        };
-
-        let mut inode_table = unsafe {
-            match &mut (*fs_raw_ptr).inode_table {
-                Some(itable) => itable,
-                _ => {
+        let this = self as *mut Self;
+        let (meta_dat, disc, inode_table) = unsafe {
+            match resolve_attr(&mut (*this)) {
+                Some(attr) => attr,
+                None => {
                     return -1;
                 }
             }
@@ -150,7 +133,7 @@ impl<'a> FileSystem<'a> {
 
         // create the inode
         let inode = Inode::blank();
-        let mut inode_list = InodeList::new(meta_dat, &mut inode_table, disk);
+        let mut inode_list = InodeList::new(meta_dat, inode_table, disk);
 
         
         if inode_list.inodeblock_isfull() {
@@ -169,34 +152,30 @@ impl<'a> FileSystem<'a> {
     pub fn remove(&mut self, inumber: usize) -> bool {
         // use inodeList to remove an inode
         // the inode list remove method should return the all 'block numbers' associated with the removed inode
-        // these 'block numbers can then be added to the 'free list of block' using the 
-        let mut inode = Inode::blank();
-        true
+        // these 'block numbers can then be added to the 'free list of block' using the
+        let this = self as *mut Self;
+        let (meta_data, disk, inode_table) = match resolve_attr(self) {
+            Some(attr) => attr,
+            None => {
+                return false
+            }
+        };
+        let mut inode_list = InodeList::new(meta_data, inode_table, disk.clone()); 
+        let ptrs = inode_list.remove(inumber);
+
+        for ptr in ptrs.iter() {
+            self.add_free_block(*ptr);
+        }
+        return true;
+        
     }
 
    pub fn stat(&mut self, inumber: usize) -> i64 {
-        let fs_raw_ptr = self as *mut Self;
-
-        let meta_dat =  unsafe {
-            match &mut (*fs_raw_ptr).meta_data {
-                Some(meta_data) => meta_data,
-                _ => {
-                    return -1;
-                }
-            }
-        };
-
-        let disc = match &self.disk {
-            Some(disk) => disk,
-            _ => {
-                return -1;
-            }
-        };
-
-        let mut inode_table = unsafe {
-            match &mut (*fs_raw_ptr).inode_table {
-                Some(itable) => itable,
-                _ => {
+        let this = self as *mut Self;
+        let (meta_dat, disc, inode_table) = unsafe {
+            match resolve_attr(&mut (*this)) {
+                Some(attr) => attr,
+                None => {
                     return -1;
                 }
             }
@@ -211,35 +190,19 @@ impl<'a> FileSystem<'a> {
         &mut self, inumber: usize, 
         data: &mut [u8], length: usize, offset: usize
     ) -> i64 {
-        let fs_raw_ptr = self as *mut Self;
+        let this = self as *mut Self;
 
-        let meta_dat =  unsafe {
-            match &mut (*fs_raw_ptr).meta_data {
-                Some(meta_data) => meta_data,
-                _ => {
-                    return -1;
-                }
-            }
-        };
-
-        let disc = match &self.disk {
-            Some(disk) => disk,
-            _ => {
-                return -1;
-            }
-        };
-
-        let mut inode_table = unsafe {
-            match &mut (*fs_raw_ptr).inode_table {
-                Some(itable) => itable,
-                _ => {
+        let (meta_dat, disc, inode_table) = unsafe {
+            match resolve_attr(&mut (*this)) {
+                Some(attr) => attr,
+                None => {
                     return -1;
                 }
             }
         };
 
         let mut disk = disc.clone();
-        let mut inode_list = InodeList::new(meta_dat, &mut inode_table, disk.clone());
+        let mut inode_list = InodeList::new(meta_dat, inode_table, disk.clone());
         let mut i_list = &mut inode_list as *mut InodeList;
         let mut inode_iter = unsafe{(*i_list).read_iter(inumber)};
 
@@ -278,32 +241,16 @@ impl<'a> FileSystem<'a> {
     pub fn write(&mut self, inumber: usize, data: &mut [u8], length: usize, offset: usize) -> i64 {
         let fs_raw_ptr = self as *mut Self;
 
-        let meta_dat =  unsafe {
-            match &mut (*fs_raw_ptr).meta_data {
-                Some(meta_data) => meta_data,
-                _ => {
+        let (meta_dat, disc, inode_table) = unsafe {
+            match resolve_attr(&mut (*fs_raw_ptr)) {
+                Some(attr) => attr,
+                None => {
                     return -1;
                 }
             }
         };
 
-        let disc = match &self.disk {
-            Some(disk) => disk,
-            _ => {
-                return -1;
-            }
-        };
-
-        let mut inode_table = unsafe {
-            match &mut (*fs_raw_ptr).inode_table {
-                Some(itable) => itable,
-                _ => {
-                    return -1;
-                }
-            }
-        };
-
-        let mut inode_list = InodeList::new(meta_dat, &mut inode_table, disc.clone());
+        let mut inode_list = InodeList::new(meta_dat, inode_table, disc.clone());
         let i_list = &mut inode_list as *mut InodeList;
         let mut writer_iter = unsafe { (*i_list).write_iter(inumber) };
         let writer_i = &mut writer_iter as *mut InodeWriteIter;
@@ -383,7 +330,6 @@ impl<'a> FileSystem<'a> {
                 }
 
                 if i == n_blocks {
-                    // writer_iter.flush();
                     unsafe {(*writer_i).flush()};
                     if (bytes_writen as usize) < length {
                         bytes_writen += write_bytes(&mut data[start..end], fs_raw_ptr);
@@ -542,6 +488,7 @@ impl<'a> FileSystem<'a> {
 
     pub fn add_free_block(&mut self, block: u32) {
         // function to add to the free list
+        println!("Added free block: {}", block);
     }
 
     pub fn generate_inode_table(meta_data: &MetaData, mut disk: Disk<'a>) -> Vec<(u32, InodeBlock)> {

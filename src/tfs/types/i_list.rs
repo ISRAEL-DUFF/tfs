@@ -59,6 +59,11 @@ impl<'a> InodeList<'a> {
         }
     }
 
+    pub fn remove(&mut self, inumber: usize) -> Vec<u32> {
+        let mut inode = self.get_inode(inumber);
+        inode.deallocate_ptrs()
+    }
+
     pub fn inodeblock_isfull(&self) -> bool {
         if self.inode_index == INODES_PER_BLOCK - 1 {
             true
