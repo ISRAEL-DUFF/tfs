@@ -6,11 +6,10 @@ use super::inode::*;
 #[allow(dead_code)]
 pub struct Superblock {
     pub magic_number: u32,
-    pub blocks: u32,
-    pub inode_blocks: u32,  // there is no need for this field
-    pub current_block_index: u32,
-    pub free_lists: u32,
-    pub inodes: u32
+    pub blocks: u64,
+    pub current_block_index: u64,
+    pub free_lists: u64,
+    pub inodes: u64
 }
 
 #[derive(Copy, Clone, Debug)]

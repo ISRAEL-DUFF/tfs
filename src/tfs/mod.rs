@@ -61,6 +61,7 @@ impl<'a> FileSystem<'a> {
         println!("Magic Number  {} is valid", superblock.magic_number);
         println!("{} blocks", superblock.blocks);
         println!("Next free block position: {}", superblock.current_block_index);
+        println!("{} Deallocated blocks", superblock.free_lists);
         println!("{} inodes", superblock.inodes);
         println!("********* END SUPER ***********\n");
 
@@ -85,8 +86,7 @@ impl<'a> FileSystem<'a> {
         let mut superblock = Block {
             superblock: Superblock {
                 magic_number: MAGIC_NUMBER as u32,
-                blocks: disk.size() as u32,
-                inode_blocks: 0,
+                blocks: disk.size() as u64,
                 current_block_index: 4,
                 free_lists: 0,
                 inodes: 0
@@ -162,10 +162,7 @@ impl<'a> FileSystem<'a> {
         };
         let mut inode_list = InodeList::new(meta_data, inode_table, disk.clone()); 
         let ptrs = inode_list.remove(inumber);
-
-        for ptr in ptrs.iter() {
-            self.add_free_block(*ptr);
-        }
+        self.free_blocks(ptrs);
         return true;
         
     }
@@ -439,6 +436,7 @@ impl<'a> FileSystem<'a> {
 
 
     fn allocate_free_block(&mut self) -> i64 {
+        let this = self as *mut Self;
         let meta_data = match &mut self.meta_data {
             Some(meta_data) => meta_data,
             _ => { return -1; }
@@ -461,34 +459,88 @@ impl<'a> FileSystem<'a> {
             }
         } else {
             // read the head of the free_list
-            let i = meta_data.superblock.free_lists as usize % (POINTERS_PER_BLOCK - 1);
-            let mut free_block = meta_data.root_free_list.pointers();
-            let free_blk = free_block[i];
-            free_block[i] = 0;
-            meta_data.root_free_list.set_pointers(free_block);
-            meta_data.superblock.free_lists = meta_data.superblock.free_lists - 1;
-
-            if i == 0 {
+            let n = (meta_data.superblock.free_lists - 1) as usize;
+            let mut i = n % (POINTERS_PER_BLOCK - 1);
+            let mut changed_root = false;
+            let mut next_ptr = 0;
+            
+            if i == POINTERS_PER_BLOCK - 2 && 
+                meta_data.root_free_list.pointers_as_mut()[0] == 0 &&
+                meta_data.root_free_list.pointers_as_mut()[POINTERS_PER_BLOCK - 2] == 0 {
                 // change the root free list here
-                println!("changing root list here..");
-                let next_ptr = free_block[POINTERS_PER_BLOCK - 1];
-                let mut block = fetch_block(disk, next_ptr as usize);
-                meta_data.root_free_list = block;
-
-                // free next_ptr block
-                self.add_free_block(next_ptr);
+                // println!("changing root list here..");
+                next_ptr = meta_data.root_free_list.pointers_as_mut()[POINTERS_PER_BLOCK - 1];
+                if next_ptr > 0 {
+                    let mut block = fetch_block(disk, next_ptr as usize);
+                    meta_data.root_free_list = block;
+                    changed_root = true;
+                }
             }
 
-            // remember to save meta_data here
+            let mut free_blk = 0;
+            if changed_root {
+                free_blk = next_ptr;
+            } else {
+                free_blk = meta_data.root_free_list.pointers_as_mut()[i];
+                meta_data.root_free_list.pointers_as_mut()[i] = 0;
+                meta_data.superblock.free_lists = meta_data.superblock.free_lists - 1;
+            }
+
+            // save and return free block
             self.save_meta_data("all");
             return free_blk as i64;
         }
         -1
     }
 
-    pub fn add_free_block(&mut self, block: u32) {
+    pub fn free_blocks(&mut self, blocks: Vec<u32>) {
         // function to add to the free list
-        println!("Added free block: {}", block);
+        println!("Adding {} free blocks", blocks.len());
+        let this = self as *mut Self;
+        let (meta_data, mut disc, _) = unsafe {
+            match resolve_attr(&mut (*this)) {
+                Some(attr) => attr,
+                None => {
+                    return;
+                }
+            }
+        };
+        let mut disk = disc.clone();
+
+        let mut free_block = meta_data.root_free_list.pointers();
+        let mut i = 0;
+        loop {
+            if i == POINTERS_PER_BLOCK {
+                break
+            }
+            if meta_data.root_free_list.pointers_as_mut()[i] == 0 {
+                break
+            }
+            i += 1;
+        }
+
+        for b in blocks.iter() {
+            if i >= POINTERS_PER_BLOCK - 1 {
+                let new_blk = *b;
+                if new_blk > 0 {
+                    disk.write(new_blk as usize, meta_data.root_free_list.data_as_mut());
+                    let mut blk = Block::new();
+                    blk.pointers_as_mut()[POINTERS_PER_BLOCK - 1] = new_blk as u32;
+                    meta_data.root_free_list.set_data(blk.data());
+                    self.save_meta_data("rfl");
+                    i = 0;
+                } else {
+                    break
+                }
+            } else {
+                meta_data.root_free_list.pointers_as_mut()[i] = *b;
+                meta_data.superblock.free_lists += 1;
+                i += 1;
+            }
+        }
+
+        self.save_meta_data("rfl");
+        self.save_meta_data("superblock");
     }
 
     pub fn generate_inode_table(meta_data: &MetaData, mut disk: Disk<'a>) -> Vec<(u32, InodeBlock)> {
