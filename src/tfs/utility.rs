@@ -56,6 +56,42 @@ pub fn resolve_attr<'a>(
     Some((meta_dat, disc, inode_table))
 }
 
+pub fn save_meta_data<'a>(meta_data: &'a mut MetaData, disk: &'a mut Disk<'a>, name: &str) -> bool {
+    let mut block = Block::new();
+    match name {
+        "superblock" => {
+            block.set_superblock(meta_data.superblock);
+            disk.write(0, block.data_as_mut());
+            true
+        },
+        "irb" => {
+            disk.write(INODES_ROOT_BLOCK, meta_data.inodes_root_block.data_as_mut());
+            true
+        },
+
+        "rfl" => {
+            disk.write(ROOT_FREE_LIST, meta_data.root_free_list.data_as_mut());
+            true
+        },
+        "ifl" => {
+            disk.write(INODES_FREE_LIST, meta_data.inodes_free_list.data_as_mut());
+            true
+        },
+        "all" => {
+            block.set_superblock(meta_data.superblock);
+            disk.write(0, block.data_as_mut());
+
+            //disk.write(INODES_ROOT_BLOCK, meta_data.inodes_root_block.data_as_mut());
+            disk.write(ROOT_FREE_LIST, meta_data.root_free_list.data_as_mut());
+            disk.write(INODES_FREE_LIST, meta_data.inodes_free_list.data_as_mut());
+            true
+        },
+        _ => {
+            false
+        }
+    }
+}
+
 pub fn as_u32_be(array: &[u8; 4]) -> u32 {
     ((array[0] as u32) << 24) +
     ((array[1] as u32) << 16) +

@@ -2,7 +2,7 @@
 use crate::tfs::disk::Disk;
 use crate::tfs::constants::*;
 use super::{MetaData, InodeReadIter, InodeWriteIter};
-use super::block::{Block, InodeBlock};
+use super::block::{Block, BlockManager, InodeBlock};
 use super::inode::{Inode, InodeProxy};
 use crate::tfs::utility::*;
 
@@ -44,24 +44,97 @@ impl<'a> InodeList<'a> {
     }
 
     pub fn add(&mut self, inode: Inode) -> i64 {
-        if self.inodeblock_isfull() {
-            -1
+        if self.fs_meta_data.superblock.free_inodes == 0 {
+            let this = self as *mut Self;
+            unsafe {
+                if (*this).inodeblock_isfull() {
+                    let mut block_mgr = BlockManager::new((*this).fs_meta_data, (*this).disk.clone());
+                    let new_blk = block_mgr.allocate_free_block();
+                    if !(*this).add_inodeblock(new_blk) {
+                        return -1;
+                    }
+                }
+                let inumber = self.fs_meta_data.superblock.inodes as usize;
+                self.fs_meta_data.inodes_root_block
+                    .iblock_as_mut()
+                    .inodes[self.inode_index] = inode;
+                self.inode_index += 1;
+                self.fs_meta_data.superblock.inodes += 1;
+                self.set_inode(inumber, inode);
+                self.save_inode(inumber);
+                inumber as i64
+            }
         } else {
-            let inumber = self.fs_meta_data.superblock.inodes as usize;
-            self.fs_meta_data.inodes_root_block
-                .iblock_as_mut()
-                .inodes[self.inode_index] = inode;
-            self.inode_index += 1;
-            self.fs_meta_data.superblock.inodes += 1;
-            self.set_inode(inumber, inode);
-            self.save_inode(inumber);
-            inumber as i64
+            let mut meta_data = &mut self.fs_meta_data;
+            // read the head of the free_list
+            let n = (meta_data.superblock.free_inodes - 1) as usize;
+            let mut i = n % (POINTERS_PER_BLOCK - 1);
+
+            if i == POINTERS_PER_BLOCK - 2 && 
+                meta_data.inodes_free_list.pointers_as_mut()[0] == 0 &&
+                meta_data.inodes_free_list.pointers_as_mut()[POINTERS_PER_BLOCK - 2] == 0 {
+                // change the root free list here
+                // println!("changing root list here..");
+                let next_ptr = meta_data.inodes_free_list.pointers_as_mut()[POINTERS_PER_BLOCK - 1];
+                if next_ptr > 0 {
+                    let mut block = fetch_block(&mut self.disk, next_ptr as usize);
+                    meta_data.inodes_free_list = block;
+                } else {
+                    return -1;
+                }
+            }
+
+            let mut free_inum = 0;
+            free_inum = meta_data.inodes_free_list.pointers_as_mut()[i];
+            meta_data.inodes_free_list.pointers_as_mut()[i] = 0;
+            meta_data.superblock.free_inodes = meta_data.superblock.free_inodes - 1;
+
+            self.set_inode(free_inum as usize, Inode::blank());
+            self.save_inode(free_inum as usize);
+            return free_inum as i64;
         }
     }
 
-    pub fn remove(&mut self, inumber: usize) -> Vec<u32> {
-        let mut inode = self.get_inode(inumber);
-        inode.deallocate_ptrs()
+    pub fn remove(&mut self, inumber: usize) -> bool {
+        let this = self as *mut Self;
+        unsafe {
+            let mut inode = (*this).get_inode(inumber);
+            let mut block_mgr = BlockManager::new((*this).fs_meta_data, (*this).disk.clone());
+            let mut block_manager = &mut block_mgr as *mut BlockManager;
+
+            // free data blocks
+            (*block_manager).free_blocks(inode.deallocate_ptrs());
+
+
+            let mut i = 0;
+            loop {
+                if i == POINTERS_PER_BLOCK {
+                    break
+                }
+                if (*this).fs_meta_data.root_free_list.pointers_as_mut()[i] == 0 {
+                    break
+                }
+                i += 1;
+            }
+
+            if i >= POINTERS_PER_BLOCK - 1 {
+                let new_blk = (*block_manager).allocate_free_block();
+                if new_blk > 0 {
+                    (*this).disk.write(new_blk as usize, (*this).fs_meta_data.inodes_free_list.data_as_mut());
+                    let mut blk = Block::new();
+                    blk.pointers_as_mut()[POINTERS_PER_BLOCK - 1] = new_blk as u32;
+                    (*this).fs_meta_data.inodes_free_list.set_data(blk.data());
+                    (*block_manager).save_meta_data("rfl");
+                    i = 0;
+                }
+            }
+            (*this).fs_meta_data.inodes_free_list.pointers_as_mut()[i] = inumber as u32;
+            (*this).fs_meta_data.superblock.free_inodes += 1;
+
+            (*block_manager).save_meta_data("rfl");
+            (*block_manager).save_meta_data("superblock");
+        }
+        true
     }
 
     pub fn inodeblock_isfull(&self) -> bool {

@@ -13,9 +13,16 @@ pub struct Inode {
     pub ctime: u32,
     pub atime: u32,
     pub blk_pointer_level: u32, // level 1 = direct, level 2 = single_indirect, level 3 = double_indirect etc.
-    pub level_index: u32,
     pub data_block: u32,    // pointer to the data blocks
-    pub total_data_blocks: u32   // total number of data blocks allocated to this inode
+    pub total_data_blocks: u32,  // total number of data blocks allocated to this inode
+    pub hard_links: u32,
+    pub user_id: u32,
+    pub group_id: u32,
+    pub mode: u32,
+    temp1: u32,
+    temp2: u32,
+    temp3: u32,
+    temp4: u32
 }
 
 pub struct InodeProxy<'c> {
@@ -29,16 +36,9 @@ pub struct InodeProxy<'c> {
 
 impl Inode {
     pub fn blank() -> Self {
-        Inode {
-            valid: 1,
-            size: 0,
-            atime: 0,
-            ctime: 0,
-            blk_pointer_level: 0,  // start from direct pointers
-            level_index: 0,
-            total_data_blocks: 0,
-            data_block: 0
-        }
+        let mut inode = Self::new();
+        inode.valid = 1;
+        inode
     }
 
     pub fn new() -> Self {
@@ -48,23 +48,17 @@ impl Inode {
             atime: 0,
             ctime: 0,
             blk_pointer_level: 0,  // start from direct pointers
-            level_index: 0,
             total_data_blocks: 0,
-            data_block: 0
+            data_block: 0,
+            hard_links: 0,
+            user_id: 0,
+            group_id: 0,
+            mode: 0,
+            temp1: 0,
+            temp2: 0,
+            temp3: 0,
+            temp4: 0
         }
-    }
-
-    pub fn increase_level(&mut self) -> bool {
-        match self.level_index {
-            1 => { 
-                self.level_index = 2;
-             }
-            2 => { self.level_index = 3; }
-            _ => {
-                return false;
-            }
-        };
-        return true;
     }
 
     pub fn pointer_level(&self) -> u32 {

@@ -152,7 +152,8 @@ fn do_create<'a>(mut disk: Disk<'a>,
         if args.len() != 1 {
             println!("Usage: create");
         } else {
-            let inumber = fs.create();
+            let fss = &mut fs as *mut FileSystem;
+            let inumber = unsafe{(*fss).create()};
             if inumber >= 0 {
                 println!("created inode {}", inumber);
             } else {

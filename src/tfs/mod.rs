@@ -7,6 +7,7 @@ use self::disk::Disk;
 use self::constants::*;
 use self::types::*;
 use self::utility::*;
+use self::prelude::block::BlockManager;
 
 impl<'a> FileSystem<'a> {
     pub fn new() -> Self {
@@ -61,7 +62,8 @@ impl<'a> FileSystem<'a> {
         println!("Magic Number  {} is valid", superblock.magic_number);
         println!("{} blocks", superblock.blocks);
         println!("Next free block position: {}", superblock.current_block_index);
-        println!("{} Deallocated blocks", superblock.free_lists);
+        println!("{} Deallocated blocks", superblock.free_blocks);
+        println!("{} Free Inodes", superblock.free_inodes);
         println!("{} inodes", superblock.inodes);
         println!("********* END SUPER ***********\n");
 
@@ -86,9 +88,10 @@ impl<'a> FileSystem<'a> {
         let mut superblock = Block {
             superblock: Superblock {
                 magic_number: MAGIC_NUMBER as u32,
-                blocks: disk.size() as u64,
+                blocks: disk.size() as u32,
                 current_block_index: 4,
-                free_lists: 0,
+                free_blocks: 0,
+                free_inodes: 0,
                 inodes: 0
             }
         };
@@ -117,7 +120,7 @@ impl<'a> FileSystem<'a> {
         true
     }
 
-    pub fn create(&mut self) -> i64 {
+    pub fn create<'c:'a>(&'c mut self) -> i64 {
         let this = self as *mut Self;
         let (meta_dat, disc, inode_table) = unsafe {
             match resolve_attr(&mut (*this)) {
@@ -134,15 +137,6 @@ impl<'a> FileSystem<'a> {
         // create the inode
         let inode = Inode::blank();
         let mut inode_list = InodeList::new(meta_dat, inode_table, disk);
-
-        
-        if inode_list.inodeblock_isfull() {
-            let new_blk = self.allocate_free_block();
-            if !inode_list.add_inodeblock(new_blk) {
-                return -1;
-            }
-        }
-        
         
         let inumber = inode_list.add(inode);
         self.save_meta_data("all");
@@ -161,10 +155,7 @@ impl<'a> FileSystem<'a> {
             }
         };
         let mut inode_list = InodeList::new(meta_data, inode_table, disk.clone()); 
-        let ptrs = inode_list.remove(inumber);
-        self.free_blocks(ptrs);
-        return true;
-        
+        inode_list.remove(inumber)        
     }
 
    pub fn stat(&mut self, inumber: usize) -> i64 {
@@ -251,12 +242,6 @@ impl<'a> FileSystem<'a> {
         let i_list = &mut inode_list as *mut InodeList;
         let mut writer_iter = unsafe { (*i_list).write_iter(inumber) };
         let writer_i = &mut writer_iter as *mut InodeWriteIter;
-        unsafe {
-            if !(*writer_i).has_datablock() {
-                let data_blk = (*fs_raw_ptr).allocate_free_block();
-                (*writer_i).set_data_block(data_blk);
-            }
-        }
 
         let write_bytes = |data: &mut [u8], fs_ptr: *mut Self| {
             let mut i = 0;
@@ -269,16 +254,7 @@ impl<'a> FileSystem<'a> {
                     if i < data.len() {
                         let r = (*writer).write_byte(data[i]);
                         if r.1 < 0 {
-                            let mut data_blk = (*fs_ptr).allocate_free_block();
-                            loop {
-                                println!("*********** Adding blocks**************");
-                                if (*writer).add_data_blk(data_blk) > 0 {
-                                    data_blk = (*fs_ptr).allocate_free_block();
-                                } else {
-                                    break;
-                                }
-                            }
-                            continue;
+                            return -1;
                         }
                     } else {
                         break
@@ -335,12 +311,9 @@ impl<'a> FileSystem<'a> {
                 }
 
                 unsafe {
-                    let blk = (*fs_raw_ptr).allocate_free_block();
-                    let r = (*writer_i).write_block(blk, &mut data[start..end]);
-                    if r > 0 {
-                        continue;
-                    } else if r < 0 {
-                        break
+                    let r = (*writer_i).write_block(&mut data[start..end]);
+                    if r < 0 {
+                        break;
                     }
                 }
 
@@ -377,44 +350,12 @@ impl<'a> FileSystem<'a> {
         }
     }
 
-    fn save_meta_data(&mut self, name: &str) -> bool {
+    fn save_meta_data<'c:'a>(&'c mut self, name: &str) -> bool {
         match &mut self.meta_data {
             Some(meta_data) => {
                 match &mut self.disk {
                     Some(disk) => {
-                        let mut block = Block::new();
-                        match name {
-                            "superblock" => {
-                                block.set_superblock(meta_data.superblock);
-                                disk.write(0, block.data_as_mut());
-                                true
-                            },
-                            "irb" => {
-                                disk.write(INODES_ROOT_BLOCK, meta_data.inodes_root_block.data_as_mut());
-                                true
-                            },
-
-                            "rfl" => {
-                                disk.write(ROOT_FREE_LIST, meta_data.root_free_list.data_as_mut());
-                                true
-                            },
-                            "ifl" => {
-                                disk.write(INODES_FREE_LIST, meta_data.inodes_free_list.data_as_mut());
-                                true
-                            },
-                            "all" => {
-                                block.set_superblock(meta_data.superblock);
-                                disk.write(0, block.data_as_mut());
-
-                                //disk.write(INODES_ROOT_BLOCK, meta_data.inodes_root_block.data_as_mut());
-                                disk.write(ROOT_FREE_LIST, meta_data.root_free_list.data_as_mut());
-                                disk.write(INODES_FREE_LIST, meta_data.inodes_free_list.data_as_mut());
-                                true
-                            },
-                            _ => {
-                                false
-                            }
-                        }
+                        save_meta_data(meta_data, disk, name)
                     },
                     _ => false
                 }
@@ -432,115 +373,6 @@ impl<'a> FileSystem<'a> {
                 return Block::new();
             }
         }
-    }
-
-
-    fn allocate_free_block(&mut self) -> i64 {
-        let this = self as *mut Self;
-        let meta_data = match &mut self.meta_data {
-            Some(meta_data) => meta_data,
-            _ => { return -1; }
-        };
-
-        let disk = match &mut self.disk {
-            Some(disk) => disk,
-            _ => {
-                return -1;
-            }
-        };
-
-        if meta_data.superblock.free_lists == 0 {
-            // allocate from current_block_index
-            let free_blk = meta_data.superblock.current_block_index;
-            if free_blk < meta_data.superblock.blocks {
-                meta_data.superblock.current_block_index += 1;
-                self.save_meta_data("superblock");   // save meta_data to disk here
-                return free_blk as i64;
-            }
-        } else {
-            // read the head of the free_list
-            let n = (meta_data.superblock.free_lists - 1) as usize;
-            let mut i = n % (POINTERS_PER_BLOCK - 1);
-            let mut changed_root = false;
-            let mut next_ptr = 0;
-            
-            if i == POINTERS_PER_BLOCK - 2 && 
-                meta_data.root_free_list.pointers_as_mut()[0] == 0 &&
-                meta_data.root_free_list.pointers_as_mut()[POINTERS_PER_BLOCK - 2] == 0 {
-                // change the root free list here
-                // println!("changing root list here..");
-                next_ptr = meta_data.root_free_list.pointers_as_mut()[POINTERS_PER_BLOCK - 1];
-                if next_ptr > 0 {
-                    let mut block = fetch_block(disk, next_ptr as usize);
-                    meta_data.root_free_list = block;
-                    changed_root = true;
-                }
-            }
-
-            let mut free_blk = 0;
-            if changed_root {
-                free_blk = next_ptr;
-            } else {
-                free_blk = meta_data.root_free_list.pointers_as_mut()[i];
-                meta_data.root_free_list.pointers_as_mut()[i] = 0;
-                meta_data.superblock.free_lists = meta_data.superblock.free_lists - 1;
-            }
-
-            // save and return free block
-            self.save_meta_data("all");
-            return free_blk as i64;
-        }
-        -1
-    }
-
-    pub fn free_blocks(&mut self, blocks: Vec<u32>) {
-        // function to add to the free list
-        println!("Adding {} free blocks", blocks.len());
-        let this = self as *mut Self;
-        let (meta_data, mut disc, _) = unsafe {
-            match resolve_attr(&mut (*this)) {
-                Some(attr) => attr,
-                None => {
-                    return;
-                }
-            }
-        };
-        let mut disk = disc.clone();
-
-        let mut free_block = meta_data.root_free_list.pointers();
-        let mut i = 0;
-        loop {
-            if i == POINTERS_PER_BLOCK {
-                break
-            }
-            if meta_data.root_free_list.pointers_as_mut()[i] == 0 {
-                break
-            }
-            i += 1;
-        }
-
-        for b in blocks.iter() {
-            if i >= POINTERS_PER_BLOCK - 1 {
-                let new_blk = *b;
-                if new_blk > 0 {
-                    disk.write(new_blk as usize, meta_data.root_free_list.data_as_mut());
-                    let mut blk = Block::new();
-                    blk.pointers_as_mut()[POINTERS_PER_BLOCK - 1] = new_blk as u32;
-                    meta_data.root_free_list.set_data(blk.data());
-                    self.save_meta_data("rfl");
-                    i = 0;
-                } else {
-                    break
-                }
-            } else {
-                meta_data.root_free_list.pointers_as_mut()[i] = *b;
-                meta_data.superblock.free_lists += 1;
-                i += 1;
-            }
-        }
-
-        self.save_meta_data("rfl");
-        self.save_meta_data("superblock");
     }
 
     pub fn generate_inode_table(meta_data: &MetaData, mut disk: Disk<'a>) -> Vec<(u32, InodeBlock)> {

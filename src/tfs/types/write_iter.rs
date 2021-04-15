@@ -1,7 +1,7 @@
 
 use crate::tfs::disk::Disk;
 use crate::tfs::constants::*;
-use super::{MetaData, InodeProxy, InodeBlock, Block};
+use super::{MetaData, InodeProxy, InodeBlock, Block, BlockManager};
 use crate::tfs::utility::*;
 
 pub struct InodeWriteIter<'a> {
@@ -117,7 +117,11 @@ impl<'a> InodeWriteIter<'a> {
         let this = self as *mut Self;
         let data_blocks = unsafe {(*this).get_inode().data_blocks()};
         if data_blocks.len() == 0 {
-            return (false, -1)
+            unsafe {
+                if !(*this).add_data_blk() {
+                    return (false, -1)
+                }
+            }
         }
         if self.next_write_index < Disk::BLOCK_SIZE {
             self.curr_data_block.data_as_mut()[self.next_write_index] = byte;
@@ -129,7 +133,16 @@ impl<'a> InodeWriteIter<'a> {
             // flush current block
             if !self.flush() {
                 println!("No flush {}", data_blocks.len());
-                return (false, -1);
+                unsafe {
+                    if (*this).add_data_blk() {
+                        // if !self.flush() {
+                        //     return (false, -1)
+                        // }
+                        return (*this).write_byte(byte);
+                    } else {
+                        return (false, -1);
+                    }
+                }
             };
 
             // add another block as current block
@@ -145,9 +158,15 @@ impl<'a> InodeWriteIter<'a> {
                 self.aligned_to_block = false;
                 self.flushed = false;
                 return (true, 1)
-            } else {    // add new data block
-                self.data_block_index += 1;
-                (false, -1)
+            } else {    
+                unsafe {
+                    if (*this).add_data_blk() {  // add new data block
+                        (*this).data_block_index += 1;
+                        return (*this).write_byte(byte); // attempt write again
+                    } else {
+                        return (false, -1)
+                    }
+                }
             }
         }
     }
@@ -181,27 +200,27 @@ impl<'a> InodeWriteIter<'a> {
         (true, m as i64)
     }
 
-    pub fn write_block<'h: 'a>(&'h mut self, block_num: i64, block_data: &mut [u8]) -> i64 {
-        if block_num < 0  || !self.aligned_to_block {
-            return -1
+    pub fn write_block<'h: 'a>(&'h mut self, block_data: &mut [u8]) -> i64 {
+        let this = self as *mut Self;
+
+        unsafe {
+            if !self.aligned_to_block {
+                return -1
+            }
+            if block_data.len() < Disk::BLOCK_SIZE {
+                return -1
+            }
+    
+            let mut inode = (*this).get_inode();
+            if (*this).add_data_blk() {
+                self.disk.write(self.data_block_num as usize, block_data);
+                self.aligned_to_block = true;
+                inode.incr_size(Disk::BLOCK_SIZE);
+                return 0;
+            } else {
+                return -1;
+            }
         }
-        if block_data.len() < Disk::BLOCK_SIZE {
-            return -1
-        }
-
-        let r = self.add_data_blk(block_num);
-
-        if r != 0 {
-            return r
-        }
-
-        self.disk.write(block_num as usize, block_data);
-        self.aligned_to_block = true;
-
-        let mut inode = self.get_inode();
-        inode.incr_size(Disk::BLOCK_SIZE);
-        // inode.save();
-        0
     }
 
     pub fn flush(&mut self) -> bool {
@@ -228,19 +247,34 @@ impl<'a> InodeWriteIter<'a> {
         }
     }
 
-    pub fn add_data_blk(&mut self, new_blk: i64) -> i64 {
-        if new_blk > 0 {
-            let this = self as *mut Self;
-            unsafe {
-                let mut inode = (*this).get_inode();
-                let r = inode.add_data_block(new_blk);
-                self.data_block_num = new_blk as u32;
-                self.next_write_index = 0;
-                self.curr_data_block = Block::new();
-                return r;
+    pub fn add_data_blk(&mut self) -> bool {
+        let this = self as *mut Self;
+
+        unsafe {
+            let mut block_mgr = BlockManager::new((*this).fs_meta_data, (*this).disk.clone());
+            let block_manager = &mut block_mgr as *mut BlockManager;
+
+            if !(*this).has_datablock() {
+                let data_blk = (*block_manager).allocate_free_block();
+                (*this).set_data_block(data_blk);
             }
-        } else {
-            return -1;
+
+            let mut data_blk = (*block_manager).allocate_free_block();
+            let mut inode = (*this).get_inode();
+            let inod = inode as *mut InodeProxy;
+            loop {
+                let r = (*inod).add_data_block(data_blk);
+                if r > 0 {
+                    data_blk = (*block_manager).allocate_free_block();
+                } else if r == 0 {
+                    self.data_block_num = data_blk as u32;
+                    self.next_write_index = 0;
+                    self.curr_data_block = Block::new();
+                    return true
+                } else {
+                    return  false;
+                }
+            }
         }
     }
 
