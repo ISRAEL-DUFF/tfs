@@ -118,6 +118,11 @@ impl<'c> InodeProxy<'c> {
         self.inode_table[i].1.inodes[j].data_block
     }
 
+    pub fn total_data_blocks(&self) -> u32 {
+        let (i, j) = self.get_index();
+        self.inode_table[i].1.inodes[j].total_data_blocks
+    }
+
     pub fn data_blocks<'d:'c>(&'d mut self) -> &Vec<u32> {
        let this = self as *mut Self;
        let data_manager = match &self.data_manager {

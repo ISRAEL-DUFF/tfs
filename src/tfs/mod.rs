@@ -2,6 +2,7 @@ mod disk;
 mod constants;
 mod types;
 mod utility;
+mod fuse;
 
 use self::disk::Disk;
 use self::constants::*;
@@ -159,18 +160,19 @@ impl<'a> FileSystem<'a> {
     }
 
    pub fn stat(&mut self, inumber: usize) -> i64 {
-        let this = self as *mut Self;
-        let (meta_dat, disc, inode_table) = unsafe {
-            match resolve_attr(&mut (*this)) {
-                Some(attr) => attr,
-                None => {
-                    return -1;
-                }
-            }
-        };
+        // let this = self as *mut Self;
+        // let (meta_dat, disc, inode_table) = unsafe {
+        //     match resolve_attr(&mut (*this)) {
+        //         Some(attr) => attr,
+        //         None => {
+        //             return -1;
+        //         }
+        //     }
+        // };
 
-        let inode = InodeProxy::new(meta_dat, inode_table, disc.clone(), inumber);
-        inode.size() as i64
+        // let inode = InodeProxy::new(meta_dat, inode_table, disc.clone(), inumber);
+        // inode.size() as i64
+        self.get_inode(inumber).size() as i64
     }
 
 
@@ -375,6 +377,20 @@ impl<'a> FileSystem<'a> {
         }
     }
 
+    pub fn get_inode(&mut self, inumber: usize) -> InodeProxy {
+        let this = self as *mut Self;
+        let (meta_dat, disc, inode_table) = unsafe {
+            match resolve_attr(&mut (*this)) {
+                Some(attr) => attr,
+                None => {
+                    panic!("could not find attribute");
+                }
+            }
+        };
+
+        InodeProxy::new(meta_dat, inode_table, disc.clone(), inumber)
+    }
+
     pub fn generate_inode_table(meta_data: &MetaData, mut disk: Disk<'a>) -> Vec<(u32, InodeBlock)> {
         let mut inode_table = Vec::new();
         let mut inode_blk = meta_data.inodes_root_block.inode_block();
@@ -396,6 +412,7 @@ impl<'a> FileSystem<'a> {
 pub mod prelude {
     pub use super::disk::*;
     pub use super::types::*;
+    pub use super::fuse::*;
 }
 
 

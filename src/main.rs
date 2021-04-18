@@ -138,6 +138,7 @@ fn do_mount<'a>(mut disk: Disk<'a>, mut fs: FileSystem<'a>,  args: Vec<&str>) ->
     } else {
         if fs.mount(&mut disk) {
             println!("disk mounted.");
+            DuffFS::new(FileSystem::from_disk(&mut disk)).mount();
         } else {
             println!("mount failed!");
         }
