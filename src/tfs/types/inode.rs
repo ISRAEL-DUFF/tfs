@@ -19,7 +19,7 @@ pub struct Inode {
     pub user_id: u32,
     pub group_id: u32,
     pub mode: u32,
-    temp1: u32,
+    pub kind: u32,  // regular file = 1, directory = 2
     temp2: u32,
     temp3: u32,
     temp4: u32
@@ -54,7 +54,7 @@ impl Inode {
             user_id: 0,
             group_id: 0,
             mode: 0,
-            temp1: 0,
+            kind: 0,
             temp2: 0,
             temp3: 0,
             temp4: 0

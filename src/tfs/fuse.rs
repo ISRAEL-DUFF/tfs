@@ -84,8 +84,8 @@ impl<'a> DuffFS<'a> {
     pub fn mount(self) {
         env_logger::init();
         // let mountpoint = env::args_os().nth(1).unwrap();
-        let mountpoint = "/data";
-        let options = ["-o", "ro", "-o", "fsname=hello"]
+        let mountpoint = "data/mnt";
+        let options = ["-o", "ro", "-o", "fsname=DuffFS"]
             .iter()
             .map(|o| o.as_ref())
             .collect::<Vec<&OsStr>>();
@@ -97,7 +97,8 @@ impl Filesystem for DuffFS<'_> {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         if parent == 1 && name.to_str() == Some("hello.txt") {
             let attr = self.get_attr(2);
-            reply.entry(&TTL, &HELLO_TXT_ATTR, 0);
+            // reply.entry(&TTL, &HELLO_TXT_ATTR, 0);
+            reply.entry(&TTL, &attr, 0);
         } else {
             reply.error(ENOENT);
         }

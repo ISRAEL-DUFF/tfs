@@ -391,6 +391,30 @@ impl<'a> FileSystem<'a> {
         InodeProxy::new(meta_dat, inode_table, disc.clone(), inumber)
     }
 
+    pub fn get_inodes(&mut self) -> Vec<InodeProxy> {
+        let this = self as *mut Self;
+        let (meta_dat, disc, inode_table) = unsafe {
+            match resolve_attr(&mut (*this)) {
+                Some(attr) => attr,
+                None => {
+                    panic!("could not find attribute");
+                }
+            }
+        };
+        let mut inode_list = InodeList::new(meta_dat, inode_table, disc.clone());
+        let mut inodes = Vec::new();
+        let mut inum = 0;
+        for inode in inode_list.iter() {
+            if inode.valid == 1 {
+                unsafe {
+                    inodes.push((*this).get_inode(inum));
+                }
+            }
+            inum += 1;
+        }
+        inodes
+    }
+
     pub fn generate_inode_table(meta_data: &MetaData, mut disk: Disk<'a>) -> Vec<(u32, InodeBlock)> {
         let mut inode_table = Vec::new();
         let mut inode_blk = meta_data.inodes_root_block.inode_block();

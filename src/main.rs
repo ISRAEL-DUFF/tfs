@@ -42,7 +42,12 @@ fn main() {
             let r = do_mount(disk, fs, command);
             disk = r.0;
             fs = r.1;
-        } else if cmd == "create" {
+        } else if cmd == "fuse_mount" {
+            let r = do_fuse_mount(disk, fs, command);
+            disk = r.0;
+            fs = r.1;
+        } 
+        else if cmd == "create" {
             let r = do_create(disk, fs, command);
             disk = r.0;
             fs = r.1;
@@ -138,10 +143,20 @@ fn do_mount<'a>(mut disk: Disk<'a>, mut fs: FileSystem<'a>,  args: Vec<&str>) ->
     } else {
         if fs.mount(&mut disk) {
             println!("disk mounted.");
-            DuffFS::new(FileSystem::from_disk(&mut disk)).mount();
         } else {
             println!("mount failed!");
         }
+    }
+
+    (disk, fs)
+}
+
+fn do_fuse_mount<'a>(mut disk: Disk<'a>, mut fs: FileSystem<'a>,  args: Vec<&str>) -> (Disk<'a>, FileSystem<'a>) {
+    if args.len() != 1 {
+        println!("Usage: mount");
+    } else {
+        println!("disk mounted.");
+        DuffFS::new(FileSystem::from_disk(&mut disk)).mount();
     }
 
     (disk, fs)

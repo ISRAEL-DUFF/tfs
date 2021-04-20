@@ -14,6 +14,7 @@ pub struct InodeWriteIter<'a> {
     data_block_index: usize,
     next_write_index: usize,
     flushed: bool,
+    overwrite: bool,
     aligned_to_block: bool,
     inode_table: &'a mut Vec<(u32, InodeBlock)>,
     fs_meta_data: &'a mut MetaData
@@ -38,6 +39,7 @@ impl<'a> InodeWriteIter<'a> {
                 data_block_index: 0,
                 next_write_index: 0,
                 flushed: true,
+                overwrite: false,
                 aligned_to_block: false,
                 inode_table: &mut (*i_table),
                 fs_meta_data: &mut (*meta_data)
@@ -50,8 +52,11 @@ impl<'a> InodeWriteIter<'a> {
     pub fn seek<'h: 'a>(&'h mut self, offset: usize) {
         let this = self as *mut Self;
         let inode = unsafe {(*this).get_inode()};
-        if offset as u64 > inode.size() {
+        if offset as u64 >= inode.size() {
             let offset = inode.size();
+            self.overwrite = false;
+        } else {
+            self.overwrite = true;
         }
         let data_blocks = inode.data_blocks();
 
@@ -89,6 +94,7 @@ impl<'a> InodeWriteIter<'a> {
                 self.data_block_num = 0;
                 self.curr_data_block = Block::new();
             }
+            self.overwrite = false;
         }
         self
     } 
@@ -135,9 +141,6 @@ impl<'a> InodeWriteIter<'a> {
                 println!("No flush {}", data_blocks.len());
                 unsafe {
                     if (*this).add_data_blk() {
-                        // if !self.flush() {
-                        //     return (false, -1)
-                        // }
                         return (*this).write_byte(byte);
                     } else {
                         return (false, -1);
