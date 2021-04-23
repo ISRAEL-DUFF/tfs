@@ -145,6 +145,10 @@ impl<'c> InodeProxy<'c> {
         self.data_manager.as_ref()
     }
 
+    pub fn data_manager_mut<'d: 'c>(&'d mut self) -> Option<&'d mut InodeDataPointer> {
+        self.data_manager.as_mut()
+    }
+
     pub fn pointer_level(&self) -> u32 {
         let (i, j) = self.get_index();
         self.inode_table[i].1.inodes[j].blk_pointer_level

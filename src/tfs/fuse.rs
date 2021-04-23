@@ -84,7 +84,7 @@ impl<'a> DuffFS<'a> {
     pub fn mount(self) {
         env_logger::init();
         // let mountpoint = env::args_os().nth(1).unwrap();
-        let mountpoint = "data/mnt";
+        let mountpoint = "data/duffFS3";
         let options = ["-o", "ro", "-o", "fsname=DuffFS"]
             .iter()
             .map(|o| o.as_ref())
@@ -95,8 +95,16 @@ impl<'a> DuffFS<'a> {
 
 impl Filesystem for DuffFS<'_> {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
-        if parent == 1 && name.to_str() == Some("hello.txt") {
-            let attr = self.get_attr(2);
+        if parent == 1 {
+            // let attr = self.get_attr(2);
+            let n = name.to_str();
+            // println!("DDDDDD: {:?}", n);
+            let attr = match n {
+                Some("hello.txt") => self.get_attr(2),
+                Some("video.mp4") => self.get_attr(3),
+                Some("audio.mp3") => self.get_attr(4),
+                _ => self.get_attr(1),
+            };
             // reply.entry(&TTL, &HELLO_TXT_ATTR, 0);
             reply.entry(&TTL, &attr, 0);
         } else {
@@ -143,6 +151,8 @@ impl Filesystem for DuffFS<'_> {
             (1, FileType::Directory, "."),
             (1, FileType::Directory, ".."),
             (2, FileType::RegularFile, "hello.txt"),
+            (3, FileType::RegularFile, "video.mp4"),
+            (4, FileType::RegularFile, "audio.mp3"),
         ];
 
         for (i, entry) in entries.into_iter().enumerate().skip(offset as usize) {

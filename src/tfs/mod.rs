@@ -332,6 +332,31 @@ impl<'a> FileSystem<'a> {
         // return write_bytes(&mut data[offset..(offset+length)], fs_raw_ptr);
     }
 
+    pub fn truncate(&mut self, inumber: usize, byte_offset: usize) {
+        let fs_raw_ptr = self as *mut Self;
+
+        let (meta_dat, disc, inode_table) = unsafe {
+            match resolve_attr(&mut (*fs_raw_ptr)) {
+                Some(attr) => attr,
+                None => {
+                    return;
+                }
+            }
+        };
+
+        let mut inode = self.get_inode(inumber);
+        let mut l = match inode.data_manager_mut() {
+            Some(data_manager) => data_manager.truncate(byte_offset),
+            None => 0
+        };
+        // if l > 0 {
+        //     let block_manager = BlockManager::new()
+        //     while l > 0 {
+        //         inode.add_data_block();
+        //     }
+        // }
+    }
+
     // ****************** helper methods and functions *******************
 
     fn read_meta_data(disk: &mut Disk<'a>) -> MetaData {

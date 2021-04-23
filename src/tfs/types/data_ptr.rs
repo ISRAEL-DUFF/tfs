@@ -23,7 +23,11 @@ impl<'d> InodeDataPointer<'d> {
 
     pub fn with_depth(depth: usize, disk: Disk<'d>, root_ptr: u32) -> Self {
         let mut d = Self::new(disk, root_ptr);
-        d.set_depth(depth)
+        if root_ptr > 0 {
+            d.set_depth(depth)
+        } else {
+            d
+        }
     }
 
     pub fn debug(&self) {
@@ -113,21 +117,7 @@ impl<'d> InodeDataPointer<'d> {
         if blk > 0 {
             let mut p = self.direct_ptrs.len();
             let ptrs = p;
-
-            // get highest depth
-            let mut depth = self.depth();
-            
-            // get the positions at the different depths
-            let mut depth_pos = vec![];
-            loop {
-                if depth > 0 {
-                    p = (ptrs as f64 / POINTERS_PER_BLOCK.pow(depth as u32) as f64).floor() as usize;
-                    depth_pos.push(p);
-                    depth -= 1;
-                } else {
-                    break
-                }
-            }
+            let depth_pos = self.compute_positions(None);
            
             if self.indirect_ptrs.len() < depth_pos.len() {
                 // increase depth / level
@@ -154,6 +144,65 @@ impl<'d> InodeDataPointer<'d> {
             return 0;
         } else {
             return -1;
+        }
+    }
+
+    fn compute_positions(&self, len: Option<usize>) -> Vec<usize> {
+        let mut p = match len {
+            Some(l) => l,
+            None => self.direct_ptrs.len()
+        };
+        let ptrs = p;
+
+        // get highest depth
+        let mut depth = self.depth();
+            
+        // get the positions at the different depths
+        let mut depth_pos = vec![];
+        loop {
+            if depth > 0 {
+                p = (ptrs as f64 / POINTERS_PER_BLOCK.pow(depth as u32) as f64).floor() as usize;
+                depth_pos.push(p);
+                depth -= 1;
+            } else {
+                break
+            }
+        }
+
+        depth_pos
+    }
+
+    pub fn truncate(&mut self, byte_offset: usize) -> i64 {
+        // compute direct pointer offset
+        let direct_offset = (byte_offset as f64 / Disk::BLOCK_SIZE as f64).ceil() as usize;
+        let mut depth_pos = self.compute_positions(Some(direct_offset));
+        depth_pos.reverse();
+
+        let mut free_blocks = vec![];
+
+        if direct_offset < self.direct_ptrs.len() { // carry out truncate
+            for i in direct_offset..self.direct_ptrs.len() {
+                free_blocks.push(self.direct_ptrs[i]);
+            }
+            self.direct_ptrs.truncate(direct_offset);
+
+            for i in 0..depth_pos.len() {
+                if depth_pos[i] < self.indirect_ptrs[i].len() - 1 {
+                    for j in (depth_pos[i]+1)..self.indirect_ptrs[i].len() {
+                        free_blocks.push(
+                            self.indirect_ptrs[i][j]
+                        );
+                    }
+                    self.indirect_ptrs[i].truncate(depth_pos[i]+1);
+                } else {
+                    break;
+                }
+            }
+            return -1;  // truncation was successfull
+        } else if direct_offset > self.direct_ptrs.len() {
+            return (direct_offset - self.direct_ptrs.len()) as i64; // number of blocks to add for padding
+        } else {
+            return 0;   // nothing to truncate
         }
     }
 
