@@ -10,3 +10,5 @@ pub const POINTERS_PER_BLOCK: usize = 1024; // this is calculated as: disk.BLOCK
 pub const INODES_ROOT_BLOCK: usize = 1;
 pub const ROOT_FREE_LIST: usize = 2;
 pub const INODES_FREE_LIST: usize = 3;
+
+pub const BUFFER_SIZE: usize = Disk::BLOCK_SIZE * 100;

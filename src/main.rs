@@ -70,6 +70,9 @@ fn main() {
         } else if cmd == "cat" {
             let f = do_cat(fs, command);
             fs = f;
+        } else if cmd == "truncate" {
+            let f = do_truncate(fs, command);
+            fs = f;
         }
         else if cmd == "exit" || cmd == "quit" {
             break;
@@ -119,6 +122,7 @@ fn do_help() {
     println!("      stat    <inode>");
     println!("      copyin  <inode> <file>");
     println!("      copyout <inode> <file>");
+    println!("      truncate <inode> <byte_offset>");
     println!("      help");
     println!("      quite");
     println!("      exit");
@@ -274,7 +278,7 @@ fn copyin<'a>(mut fs: FileSystem<'a>, path: &str, inumber: usize) -> (FileSystem
         }
     };
 
-    let mut buffer = [0; Disk::BLOCK_SIZE * 100];
+    let mut buffer = [0; BUFFER_SIZE];
     let mut offset = 0;
     let mut len = 0;
     let mut n = 0;
@@ -318,8 +322,6 @@ fn copyout<'a>(mut fs: FileSystem<'a>, path: &str, inumber: usize) -> (FileSyste
         }
     };
 
-    const BUFFER_SIZE: usize = Disk::BLOCK_SIZE * 100;
-
     let mut buffer = [0; BUFFER_SIZE];
     let mut offset = 0;
 
@@ -352,5 +354,18 @@ fn do_cat<'a>(mut fs: FileSystem<'a>, args: Vec<&str>) -> FileSystem<'a> {
             println!("cat failed!");
         }
         return f;
+    }
+}
+
+fn do_truncate<'a>(mut fs: FileSystem<'a>, args: Vec<&str>) -> FileSystem<'a> {
+    if args.len() != 3 {
+        println!("Usage: truncate <inode> <byte_offset>");
+        return fs;
+    } else {
+        let inumber = args[1].parse().unwrap();
+        let offset = args[2].parse().unwrap();
+        // let (f, copied) = copyout(fs, "/dev/stdout", inumber);
+        fs.truncate(inumber, offset);
+        return fs;
     }
 }

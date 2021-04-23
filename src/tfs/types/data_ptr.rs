@@ -180,6 +180,8 @@ impl<'d> InodeDataPointer<'d> {
 
         let mut free_blocks = vec![];
 
+        println!("bb: {}, {}", byte_offset, direct_offset);
+
         if direct_offset < self.direct_ptrs.len() { // carry out truncate
             for i in direct_offset..self.direct_ptrs.len() {
                 free_blocks.push(self.direct_ptrs[i]);

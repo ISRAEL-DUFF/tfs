@@ -344,17 +344,39 @@ impl<'a> FileSystem<'a> {
             }
         };
 
-        let mut inode = self.get_inode(inumber);
-        let mut l = match inode.data_manager_mut() {
-            Some(data_manager) => data_manager.truncate(byte_offset),
-            None => 0
-        };
-        // if l > 0 {
-        //     let block_manager = BlockManager::new()
-        //     while l > 0 {
-        //         inode.add_data_block();
-        //     }
-        // }
+        let mut inod = self.get_inode(inumber);
+        let mut inode = &mut inod as *mut InodeProxy;
+        
+        unsafe {
+            if (*inode).init_datablocks() {
+                println!("Datablocks inited");
+            }
+            let mut l = match (*inode).data_manager_mut() {
+                Some(data_manager) => data_manager.truncate(byte_offset),
+                None => 0
+            };
+
+            println!("TRuncate Len: {}", l);
+    
+            if l != 0 {
+                // inode.save();
+                (*inode).save_data_blocks();
+            }
+    
+            if l > 0 {
+                let mut len = byte_offset - (*inode).size() as usize;
+                loop {
+                    let mut data = [0; BUFFER_SIZE];
+                    if len < BUFFER_SIZE {
+                        self.write(inumber, &mut data, len, 0);
+                        break;
+                    } else {
+                        self.write(inumber, &mut data, BUFFER_SIZE, 0);
+                        len -= BUFFER_SIZE;
+                    }
+                }
+            }
+        }
     }
 
     // ****************** helper methods and functions *******************
@@ -462,6 +484,7 @@ pub mod prelude {
     pub use super::disk::*;
     pub use super::types::*;
     pub use super::fuse::*;
+    pub use super::constants::*;
 }
 
 
