@@ -93,8 +93,11 @@ impl<'c> InodeProxy<'c> {
         disk: Disk<'c>, 
         inumber: usize
     ) -> Self {
+        if inumber < 1 {
+            panic!("Invalid Inumber: {}", inumber);
+        }
         InodeProxy {
-            inumber,
+            inumber: inumber - 1,
             data_manager: None,
             inode_table,
             fs_meta_data,
@@ -113,6 +116,11 @@ impl<'c> InodeProxy<'c> {
         self.inode_table[i].1.inodes[j].size
     }
 
+    pub fn is_dir(&self) -> bool {
+        let (i, j) = self.get_index();
+        self.inode_table[i].1.inodes[j].kind == 2
+    }
+
     pub fn data_block(&self) -> u32 {
         let (i, j) = self.get_index();
         self.inode_table[i].1.inodes[j].data_block
@@ -125,18 +133,15 @@ impl<'c> InodeProxy<'c> {
 
     pub fn data_blocks<'d:'c>(&'d mut self) -> &Vec<u32> {
        let this = self as *mut Self;
+       if !self.datablocks_inited() {
+            unsafe { (*this).init_datablocks() };
+       }
+
        let data_manager = match &self.data_manager {
             Some(data_manager) => {
                 data_manager
             },
-            _ => {
-                let manager = InodeDataPointer::with_depth(self.pointer_level() as usize, self.disk.clone(), unsafe{(*this).data_block()});
-               unsafe{ (*this).data_manager = Some(manager); }
-                match &self.data_manager {
-                    Some(m) => m,
-                    _ => panic!("Unable to create inode data manager")
-                }
-            }
+            _ => panic!("Unable to create inode data manager")
         };
         &data_manager.direct_pointers()
     }
@@ -157,21 +162,35 @@ impl<'c> InodeProxy<'c> {
     pub fn set_data_block<'f:'c>(&'f mut self, blk: u32) {
         let (i, j) = self.get_index();
         self.inode_table[i].1.inodes[j].data_block = blk;
-        self.data_manager = Some(
-            InodeDataPointer::new(self.disk.clone(), blk)
-        );
+        self.disk.write(blk as usize, Block::new().data_as_mut());
+        self.init_datablocks();
     }
 
     pub fn init_datablocks<'g:'c>(&'g mut self) -> bool {
         if self.data_block() == 0 {
-            return false;
+            let man = InodeDataPointer::new(self.disk.clone(), self.data_block(), self.total_data_blocks());
+            self.data_manager = Some(man);
+            false
+        } else {
+            let b = self.data_block();
+            let manager = InodeDataPointer::with_depth(
+                self.pointer_level() as usize, 
+                self.disk.clone(), b, 
+                self.total_data_blocks()
+            );
+            self.data_manager = Some(
+                manager
+            );
+            true
         }
-        let b = self.data_block();
-        let manager = InodeDataPointer::with_depth(self.pointer_level() as usize, self.disk.clone(), b);
-        self.data_manager = Some(
-            manager
-        );
-        true
+        
+    }
+
+    pub fn datablocks_inited(&self) -> bool {
+        match &self.data_manager {
+            Some(data_manager) => data_manager.root_ptr > 0,
+            None => false
+        }
     }
 
     pub fn incr_size(&mut self, amount: usize) {
@@ -179,27 +198,31 @@ impl<'c> InodeProxy<'c> {
         self.inode_table[i].1.inodes[j].size += amount as u64;
     }
 
+    pub fn set_size(&mut self, new_size: usize) {
+        let (i, j) = self.get_index();
+        self.inode_table[i].1.inodes[j].size = new_size as u64;
+    }
+
     pub fn incr_data_blocks(&mut self, amount: usize) {
         let (i, j) = self.get_index();
         self.inode_table[i].1.inodes[j].total_data_blocks += amount as u32;
     }
 
+    pub fn set_data_blocks_count(&mut self, blocks: usize) {
+        let (i, j) = self.get_index();
+        self.inode_table[i].1.inodes[j].total_data_blocks = blocks as u32;
+    }
+
     pub fn add_data_block<'h: 'c>(&'h mut self, blk: i64) -> i64 {
         let this = self as *mut Self;
+       if !self.datablocks_inited() {
+           unsafe { (*this).init_datablocks() };
+       }
        let data_manager = match &mut self.data_manager {
             Some(data_manager) => {
                 data_manager
             }, 
-            _ => {
-                let manager = InodeDataPointer::new(self.disk.clone(), unsafe{(*this).data_block()});
-                self.data_manager = Some(
-                    manager
-                );
-                match &mut self.data_manager {
-                    Some(m) => m,
-                    _ => return -1
-                }
-            }
+            _ => return -1
         };
 
         let r = data_manager.add_data_block(blk);
@@ -213,7 +236,19 @@ impl<'c> InodeProxy<'c> {
     }
 
     pub fn save(&mut self) -> bool {
+        let this = self as *mut InodeProxy;
         let (i, j) = self.get_index();
+
+        match self.data_manager() {
+            Some(data_mgr) => {
+                unsafe { 
+                    (*this).inode_table[i].1.inodes[j].blk_pointer_level = data_mgr.depth() as u32;
+                    (*this).inode_table[i].1.inodes[j].total_data_blocks = data_mgr.direct_ptrs.len() as u32;
+                };
+            },
+            _ => {}
+        };
+
         let (block_num, mut inodeblock) = self.inode_table[i];
         self.disk.write(block_num as usize, inodeblock.as_block().data_as_mut());
 
@@ -235,7 +270,7 @@ impl<'c> InodeProxy<'c> {
     pub fn to_direct_pointers<'g:'c>(&'g mut self) -> Vec<u32> {
         let b = self.data_block();
         if b > 0 {
-            InodeDataPointer::with_depth(self.pointer_level() as usize, self.disk.clone(), b)
+            InodeDataPointer::with_depth(self.pointer_level() as usize, self.disk.clone(), b, self.total_data_blocks())
             .blocks()
         } else {
             Vec::new()

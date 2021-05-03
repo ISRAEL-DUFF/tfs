@@ -8,21 +8,23 @@ pub struct InodeDataPointer<'d> {
     pub direct_ptrs: Vec<u32>,
     pub indirect_ptrs: Vec<Vec<u32>>,    // the len of indirect_ptrs = depth
     disk: Disk<'d>,
-    pub root_ptr: u32
+    pub root_ptr: u32,
+    pub data_blocks_count: u32
 }
 
 impl<'d> InodeDataPointer<'d> {
-    pub fn new(disk: Disk<'d>, root_ptr: u32) -> Self {
+    pub fn new(disk: Disk<'d>, root_ptr: u32, data_blocks_count: u32) -> Self {
         InodeDataPointer {
             root_ptr,
             disk,
             direct_ptrs: Vec::new(),
-            indirect_ptrs: Vec::new()
+            indirect_ptrs: Vec::new(),
+            data_blocks_count
         }
     }
 
-    pub fn with_depth(depth: usize, disk: Disk<'d>, root_ptr: u32) -> Self {
-        let mut d = Self::new(disk, root_ptr);
+    pub fn with_depth(depth: usize, disk: Disk<'d>, root_ptr: u32, data_blocks_count: u32) -> Self {
+        let mut d = Self::new(disk, root_ptr, data_blocks_count);
         if root_ptr > 0 {
             d.set_depth(depth)
         } else {
@@ -31,15 +33,20 @@ impl<'d> InodeDataPointer<'d> {
     }
 
     pub fn debug(&self) {
-        println!("*********** Inode Data Pointer *************");
+        println!("\n*********** Inode Data Pointer *************");
         println!("Root Ptr: {}", self.root_ptr);
+        println!("Depth: {}", self.depth());
         println!("Direct Ptrs: {:?}", self.direct_ptrs.len());
         println!("InDirect Ptrs: {:?}", self.indirect_ptrs.len());
-        println!("*********** End *************");
+        println!("*********** End *************\n");
     }
 
     pub fn to_depth(mut self, n: usize) -> Self {
         let data_block = self.root_ptr;
+        // let mut m = (self.data_blocks_count as usize) % POINTERS_PER_BLOCK;
+        // if m == 0 && self.data_blocks_count != 0 {
+        //     m = POINTERS_PER_BLOCK;
+        // }
         let index_zero = |array: [u32; POINTERS_PER_BLOCK]| {
             let mut i = 0;
             loop {
@@ -172,21 +179,28 @@ impl<'d> InodeDataPointer<'d> {
         depth_pos
     }
 
-    pub fn truncate(&mut self, byte_offset: usize) -> i64 {
+    pub fn truncate(&mut self, byte_offset: usize) -> (i64, usize, Vec<u32>) {
         // compute direct pointer offset
         let direct_offset = (byte_offset as f64 / Disk::BLOCK_SIZE as f64).ceil() as usize;
         let mut depth_pos = self.compute_positions(Some(direct_offset));
         depth_pos.reverse();
 
         let mut free_blocks = vec![];
+        let mut n_free_direct_ptrs = 0;
 
-        println!("bb: {}, {}", byte_offset, direct_offset);
+        println!("bb: {}, {}, {}, {}", self.root_ptr, byte_offset, direct_offset, self.direct_ptrs.len());
 
         if direct_offset < self.direct_ptrs.len() { // carry out truncate
             for i in direct_offset..self.direct_ptrs.len() {
                 free_blocks.push(self.direct_ptrs[i]);
+                n_free_direct_ptrs += 1;
             }
-            self.direct_ptrs.truncate(direct_offset);
+
+            if byte_offset == 0 {
+                self.direct_ptrs.truncate(self.direct_ptrs.len());
+            } else {
+                self.direct_ptrs.truncate(direct_offset);
+            }
 
             for i in 0..depth_pos.len() {
                 if depth_pos[i] < self.indirect_ptrs[i].len() - 1 {
@@ -200,11 +214,13 @@ impl<'d> InodeDataPointer<'d> {
                     break;
                 }
             }
-            return -1;  // truncation was successfull
+
+            // deallocate unused blocks
+            return (-1, n_free_direct_ptrs, free_blocks); // truncation was successfull, return the free blocks
         } else if direct_offset > self.direct_ptrs.len() {
-            return (direct_offset - self.direct_ptrs.len()) as i64; // number of blocks to add for padding
+            return ((direct_offset - self.direct_ptrs.len()) as i64, n_free_direct_ptrs, vec![]); // number of blocks to add for padding
         } else {
-            return 0;   // nothing to truncate
+            return (0, n_free_direct_ptrs, vec![]);   // nothing to truncate
         }
     }
 

@@ -15,6 +15,7 @@ pub struct InodeWriteIter<'a> {
     next_write_index: usize,
     flushed: bool,
     overwrite_len: usize,
+    number_of_bytes: usize,
     aligned_to_block: bool,
     inode_table: &'a mut Vec<(u32, InodeBlock)>,
     fs_meta_data: &'a mut MetaData
@@ -40,6 +41,7 @@ impl<'a> InodeWriteIter<'a> {
                 next_write_index: 0,
                 flushed: true,
                 overwrite_len: 0,
+                number_of_bytes: 0,
                 aligned_to_block: false,
                 inode_table: &mut (*i_table),
                 fs_meta_data: &mut (*meta_data)
@@ -79,9 +81,9 @@ impl<'a> InodeWriteIter<'a> {
             let offset = inode.size() as usize;
             let inode_inited = inode.init_datablocks();
             let data_blocks = (*this).get_inode().data_blocks();
-
             self.data_block_index = (offset as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
             self.next_write_index = offset % Disk::BLOCK_SIZE;
+            // println!("Check: {}, {}, {}, {:?}", inode_inited, self.data_block_index, self.next_write_index, data_blocks);
             if inode_inited && self.data_block_index < data_blocks.len() {
                 self.data_block_num = data_blocks[self.data_block_index];
                 let mut curr_blk = Block::new();
@@ -130,6 +132,7 @@ impl<'a> InodeWriteIter<'a> {
         if self.next_write_index < Disk::BLOCK_SIZE {
             self.curr_data_block.data_as_mut()[self.next_write_index] = byte;
             self.next_write_index += 1;
+            self.number_of_bytes += 1;
             self.aligned_to_block = false;
             self.flushed = false;
             (true, 1)
@@ -159,7 +162,7 @@ impl<'a> InodeWriteIter<'a> {
                 self.aligned_to_block = false;
                 self.flushed = false;
                 return (true, 1)
-            } else {    
+            } else {
                 unsafe {
                     if (*this).add_data_blk() {  // add new data block
                         return (*this).write_byte(byte); // attempt write again
@@ -173,7 +176,7 @@ impl<'a> InodeWriteIter<'a> {
 
     // the align_to_block() method is used to align the write position to the beginning of a new block
     // this enables the use of write_block() method.
-    pub fn align_to_block<'h: 'a>(&'h mut self, block_data: &mut [u8]) -> (bool, i64) {
+    pub fn align_to_block<'h: 'a>(&'h mut self, block_data: &[u8], max_len: usize) -> (bool, i64) {
         if self.aligned_to_block {
             return (true, 0)
         }
@@ -191,16 +194,18 @@ impl<'a> InodeWriteIter<'a> {
         let mut m = 0;
         loop {
             let (success, _) = unsafe{(*this).write_byte(block_data[m])};
-            if !success {
+            if !success || m == max_len || m == n {
                 break
             }
             m += 1;
         }
-        self.aligned_to_block = true;
+        if m == n {
+            self.aligned_to_block = true;
+        }
         (true, m as i64)
     }
 
-    pub fn write_block<'h: 'a>(&'h mut self, block_data: &mut [u8]) -> i64 {
+    pub fn write_block<'h: 'a>(&'h mut self, block_data: &[u8]) -> i64 {
         let this = self as *mut Self;
 
         unsafe {
@@ -231,9 +236,10 @@ impl<'a> InodeWriteIter<'a> {
         if self.data_block_num > 0 && data_blocks.len() > 0 {
             unsafe {
                 if !self.aligned_to_block && !self.flushed {
+                    // println!("Flush: {}, {}, {:?}", self.number_of_bytes, self.data_block_num, data_blocks);
                     (*this).disk.write(self.data_block_num as usize, self.curr_data_block.data_as_mut());
-                    // (*this).get_inode().incr_size(self.next_write_index);
-                    (*this).incr_size(self.next_write_index);
+                    (*this).incr_size(self.number_of_bytes);
+                    self.number_of_bytes = 0;
                  } 
                 
                 if (*this).next_write_index == Disk::BLOCK_SIZE {

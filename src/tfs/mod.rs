@@ -122,56 +122,34 @@ impl<'a> FileSystem<'a> {
     }
 
     pub fn create<'c:'a>(&'c mut self) -> i64 {
-        let this = self as *mut Self;
-        let (meta_dat, disc, inode_table) = unsafe {
-            match resolve_attr(&mut (*this)) {
-                Some(attr) => attr,
-                None => {
-                    return -1;
-                }
-            }
-        };
-
-        let mut disk = disc.clone();
-
-
         // create the inode
-        let inode = Inode::blank();
-        let mut inode_list = InodeList::new(meta_dat, inode_table, disk);
-        
-        let inumber = inode_list.add(inode);
+        let inumber = self.inode_list().add(Inode::blank());
+        self.save_meta_data("all");
+        inumber
+    }
+
+    pub fn create_from<'c:'a>(&'c mut self, inode: Inode) -> i64 {
+        // create the inode
+        let inumber = self.inode_list().add(inode);
+        self.save_meta_data("all");
+        inumber
+    }
+
+    pub fn create_dir<'c:'a>(&'c mut self) -> i64 {
+        // create the inode
+        let mut inode = Inode::blank();
+        inode.kind = 2;
+        let inumber = self.inode_list().add(inode);
         self.save_meta_data("all");
         inumber
     }
 
     pub fn remove(&mut self, inumber: usize) -> bool {
         // use inodeList to remove an inode
-        // the inode list remove method should return the all 'block numbers' associated with the removed inode
-        // these 'block numbers can then be added to the 'free list of block' using the
-        let this = self as *mut Self;
-        let (meta_data, disk, inode_table) = match resolve_attr(self) {
-            Some(attr) => attr,
-            None => {
-                return false
-            }
-        };
-        let mut inode_list = InodeList::new(meta_data, inode_table, disk.clone()); 
-        inode_list.remove(inumber)        
+        self.inode_list().remove(inumber)
     }
 
    pub fn stat(&mut self, inumber: usize) -> i64 {
-        // let this = self as *mut Self;
-        // let (meta_dat, disc, inode_table) = unsafe {
-        //     match resolve_attr(&mut (*this)) {
-        //         Some(attr) => attr,
-        //         None => {
-        //             return -1;
-        //         }
-        //     }
-        // };
-
-        // let inode = InodeProxy::new(meta_dat, inode_table, disc.clone(), inumber);
-        // inode.size() as i64
         self.get_inode(inumber).size() as i64
     }
 
@@ -181,18 +159,7 @@ impl<'a> FileSystem<'a> {
         data: &mut [u8], length: usize, offset: usize
     ) -> i64 {
         let this = self as *mut Self;
-
-        let (meta_dat, disc, inode_table) = unsafe {
-            match resolve_attr(&mut (*this)) {
-                Some(attr) => attr,
-                None => {
-                    return -1;
-                }
-            }
-        };
-
-        let mut disk = disc.clone();
-        let mut inode_list = InodeList::new(meta_dat, inode_table, disk.clone());
+        let mut inode_list = self.inode_list();
         let mut i_list = &mut inode_list as *mut InodeList;
         let mut inode_iter = unsafe{(*i_list).read_iter(inumber)};
 
@@ -228,33 +195,26 @@ impl<'a> FileSystem<'a> {
         return inode_iter.read_buffer(data, length)    
     }
 
-    pub fn write(&mut self, inumber: usize, data: &mut [u8], length: usize, offset: usize) -> i64 {
+    pub fn write_data(&mut self, mut write_obj: InodeWriteIter, data: &[u8], length: usize, offset: usize) -> i64 {
         let fs_raw_ptr = self as *mut Self;
 
-        let (meta_dat, disc, inode_table) = unsafe {
-            match resolve_attr(&mut (*fs_raw_ptr)) {
-                Some(attr) => attr,
-                None => {
-                    return -1;
-                }
-            }
-        };
+        // let mut inode_list = self.inode_list();
+        // let i_list = &mut inode_list as *mut InodeList;
+        // let mut writer_iter = unsafe { (*i_list).write_iter(inumber) };
+        // let writer_i = &mut writer_iter as *mut InodeWriteIter;
 
-        let mut inode_list = InodeList::new(meta_dat, inode_table, disc.clone());
-        let i_list = &mut inode_list as *mut InodeList;
-        let mut writer_iter = unsafe { (*i_list).write_iter(inumber) };
-        let writer_i = &mut writer_iter as *mut InodeWriteIter;
+        let writer = &mut write_obj as *mut InodeWriteIter;
 
-        let write_bytes = |data: &mut [u8], fs_ptr: *mut Self| {
+        let write_bytes = |data: &[u8], w: *mut InodeWriteIter| {
             let mut i = 0;
-            let mut w = unsafe { (*i_list).write_iter(inumber) };
-            let writer = &mut w as *mut InodeWriteIter;
+            // let mut w = unsafe { (*i_list).write_iter(inumber) };
+            // let writer = &mut w as *mut InodeWriteIter;
 
             println!("Data Len: {}", data.len());
             unsafe {
                 loop {
                     if i < data.len() {
-                        let r = (*writer).write_byte(data[i]);
+                        let r = (*w).write_byte(data[i]);
                         if r.1 < 0 {
                             return -1;
                         }
@@ -264,26 +224,27 @@ impl<'a> FileSystem<'a> {
                     i += 1;
                 }
             
-                // return i as i64;
+                return i as i64;
 
-                if (*writer).flush() {
-                    return i as i64
-                } else {
-                    -1
-                }
+                // if (*w).flush() {
+                //     return i as i64
+                // } else {
+                //     -1
+                // }
             }
         };
 
         let mut block_aligned = false;
         let mut n_bytes_writen = 0;
 
-        let (aligned, n_bytes) = writer_iter.align_to_block(&mut data[offset..]);
+        let (aligned, n_bytes) = unsafe { (*writer).align_to_block(&data[offset..], length) };
         let mut bytes_writen = 0;
         
         block_aligned = aligned;
         n_bytes_writen = n_bytes;
         if block_aligned {
-            let n_blocks = (length as f64 / Disk::BLOCK_SIZE as f64).floor() as usize;
+            let len = (length - n_bytes_writen as usize) as f64;
+            let n_blocks = (len / Disk::BLOCK_SIZE as f64).floor() as usize;
             let mut i  = 0;
             let mut start = offset + n_bytes_writen as usize;
             let mut end = start + Disk::BLOCK_SIZE;
@@ -291,29 +252,29 @@ impl<'a> FileSystem<'a> {
             loop {
                 if end > data.len() && (bytes_writen as usize) < length  {
                     end = data.len();
-                    unsafe {(*writer_i).flush()};
-                    bytes_writen += write_bytes(&mut data[start..end], fs_raw_ptr);
+                    // unsafe {(*writer).flush()};
+                    bytes_writen += write_bytes(&data[start..end], writer);
                     break
                 }
 
                 if end > length && (bytes_writen as usize) < length {
                     end = length;
-                    unsafe {(*writer_i).flush()};
-                    let  b = write_bytes(&mut data[start..end], fs_raw_ptr);
+                    // unsafe {(*writer).flush()};
+                    let  b = write_bytes(&data[start..end], writer);
                     bytes_writen += b;
                     break
                 }
 
                 if i == n_blocks {
-                    unsafe {(*writer_i).flush()};
+                    // unsafe {(*writer).flush()};
                     if (bytes_writen as usize) < length {
-                        bytes_writen += write_bytes(&mut data[start..end], fs_raw_ptr);
+                        bytes_writen += write_bytes(&data[start..end], writer);
                     }
                     break
                 }
 
                 unsafe {
-                    let r = (*writer_i).write_block(&mut data[start..end]);
+                    let r = (*writer).write_block(&data[start..end]);
                     if r < 0 {
                         break;
                     }
@@ -325,6 +286,14 @@ impl<'a> FileSystem<'a> {
                 bytes_writen += Disk::BLOCK_SIZE as i64;
             }
 
+            // temporary code for debug purposes
+            // unsafe {
+            //     match (*writer_i).get_inode().data_manager() {
+            //         Some(data_man) => data_man.debug(),
+            //         _ => println!("Nothing")
+            //     }
+            // };
+            unsafe {(*writer).flush()};
             return bytes_writen as i64;
         }
         -1
@@ -332,11 +301,19 @@ impl<'a> FileSystem<'a> {
         // return write_bytes(&mut data[offset..(offset+length)], fs_raw_ptr);
     }
 
+    pub fn write(&mut self, inumber: usize, data: &[u8], length: usize, offset: usize) -> i64 {
+        let this = self as *mut FileSystem;
+        unsafe {
+            let mut inode_list = (*this).inode_list();
+            (*this).write_data(inode_list.write_iter(inumber), data, length, offset)
+        }
+    }
+
     pub fn truncate(&mut self, inumber: usize, byte_offset: usize) {
-        let fs_raw_ptr = self as *mut Self;
+        let this = self as *mut Self;
 
         let (meta_dat, disc, inode_table) = unsafe {
-            match resolve_attr(&mut (*fs_raw_ptr)) {
+            match resolve_attr(&mut (*this)) {
                 Some(attr) => attr,
                 None => {
                     return;
@@ -348,23 +325,51 @@ impl<'a> FileSystem<'a> {
         let mut inode = &mut inod as *mut InodeProxy;
         
         unsafe {
+            let mut l = 0;
+            let mut unused_blocks = vec![];
+            let mut n_free_direct_ptrs = 0;
             if (*inode).init_datablocks() {
-                println!("Datablocks inited");
+                let r = match (*inode).data_manager_mut() {
+                    Some(data_manager) => data_manager.truncate(byte_offset),
+                    None => (0, 0, vec![])
+                };
+
+                l = r.0;
+                n_free_direct_ptrs = r.1;
+                unused_blocks = r.2;
             }
-            let mut l = match (*inode).data_manager_mut() {
-                Some(data_manager) => data_manager.truncate(byte_offset),
-                None => 0
-            };
+            
 
             println!("TRuncate Len: {}", l);
     
-            if l != 0 {
-                // inode.save();
+            if l < 0 {
+                let total_data_blocks = (*inode).total_data_blocks();
+                // println!("Traaa: {}, {}, {}", total_data_blocks, unused_blocks.len(), n_free_direct_ptrs);
+                (*inode).set_data_blocks_count(total_data_blocks as usize - n_free_direct_ptrs);
                 (*inode).save_data_blocks();
+                let mut block_mgr = BlockManager::new(meta_dat, disc.clone());
+                if byte_offset == 0 {
+                    // block_mgr.free_blocks(vec![(*inode).data_block()]);
+                    unused_blocks.push((*inode).data_block());
+                    (*inode).set_data_block(0);
+                }
+                block_mgr.free_blocks(unused_blocks);
+
+                // set new size
+                (*inode).set_size(byte_offset);
+                (*inode).save();
+            }
+
+            let size = (*inode).size() as usize;
+            let mut len = 0;
+            if byte_offset > size {
+                len = byte_offset - size;
+            } else {
+                (*inode).set_size(byte_offset);
+                (*inode).save();
             }
     
-            if l > 0 {
-                let mut len = byte_offset - (*inode).size() as usize;
+            if l >= 0 && len > 0 {
                 loop {
                     let mut data = [0; BUFFER_SIZE];
                     if len < BUFFER_SIZE {
@@ -424,6 +429,23 @@ impl<'a> FileSystem<'a> {
         }
     }
 
+    pub fn inode_list(&mut self) -> InodeList {
+        let this = self as *mut Self;
+        let (meta_dat, disc, inode_table) = unsafe {
+            match resolve_attr(&mut (*this)) {
+                Some(attr) => attr,
+                None => {
+                    panic!("could not find attribute");
+                }
+            }
+        };
+        InodeList::new(meta_dat, inode_table, disc.clone())
+    }
+
+    // pub fn write_obj(&mut self, inumber) -> {
+    //     self.inode_list().write_iter(inumber)
+    // }
+
     pub fn get_inode(&mut self, inumber: usize) -> InodeProxy {
         let this = self as *mut Self;
         let (meta_dat, disc, inode_table) = unsafe {
@@ -440,17 +462,9 @@ impl<'a> FileSystem<'a> {
 
     pub fn get_inodes(&mut self) -> Vec<InodeProxy> {
         let this = self as *mut Self;
-        let (meta_dat, disc, inode_table) = unsafe {
-            match resolve_attr(&mut (*this)) {
-                Some(attr) => attr,
-                None => {
-                    panic!("could not find attribute");
-                }
-            }
-        };
-        let mut inode_list = InodeList::new(meta_dat, inode_table, disc.clone());
+        let mut inode_list = self.inode_list();
         let mut inodes = Vec::new();
-        let mut inum = 0;
+        let mut inum = 1;
         for inode in inode_list.iter() {
             if inode.valid == 1 {
                 unsafe {

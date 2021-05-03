@@ -111,7 +111,7 @@ impl<'a> Disk<'a> {
         }        
     }
 
-    pub fn write<'c>(&mut self, blocknum: usize, data: &'c mut [u8]) {
+    pub fn write<'c>(&mut self, blocknum: usize, data: &'c [u8]) {
         self.sanity_check(blocknum);
         match self.file_descriptor.as_mut() {
             Some(file) => {

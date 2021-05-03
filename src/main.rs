@@ -51,7 +51,12 @@ fn main() {
             let r = do_create(disk, fs, command);
             disk = r.0;
             fs = r.1;
-        } else if cmd == "remove" {
+        } else if cmd == "create_dir" {
+            let r = do_create_dir(disk, fs, command);
+            disk = r.0;
+            fs = r.1;
+        }
+        else if cmd == "remove" {
             let r = do_remove(disk, fs, command);
             disk = r.0;
             fs = r.1;
@@ -117,6 +122,7 @@ fn do_help() {
     println!("      mount");
     println!("      debug");
     println!("      create");
+    println!("      create_dir");
     println!("      remove  <inode>");
     println!("      cat     <inode>");
     println!("      stat    <inode>");
@@ -174,6 +180,24 @@ fn do_create<'a>(mut disk: Disk<'a>,
         } else {
             let fss = &mut fs as *mut FileSystem;
             let inumber = unsafe{(*fss).create()};
+            if inumber >= 0 {
+                println!("created inode {}", inumber);
+            } else {
+                println!("create failed!");
+            }
+        }
+    
+        (disk, fs) 
+}
+
+fn do_create_dir<'a>(mut disk: Disk<'a>, 
+    mut fs: FileSystem<'a>,  args: Vec<&str>) 
+    -> (Disk<'a>, FileSystem<'a>) {
+        if args.len() != 1 {
+            println!("Usage: create");
+        } else {
+            let fss = &mut fs as *mut FileSystem;
+            let inumber = unsafe{(*fss).create_dir()};
             if inumber >= 0 {
                 println!("created inode {}", inumber);
             } else {

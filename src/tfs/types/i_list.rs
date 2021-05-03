@@ -54,12 +54,13 @@ impl<'a> InodeList<'a> {
                         return -1;
                     }
                 }
+                self.fs_meta_data.superblock.inodes += 1;
                 let inumber = self.fs_meta_data.superblock.inodes as usize;
                 self.fs_meta_data.inodes_root_block
                     .iblock_as_mut()
                     .inodes[self.inode_index] = inode;
                 self.inode_index += 1;
-                self.fs_meta_data.superblock.inodes += 1;
+                // self.fs_meta_data.superblock.inodes += 1;
                 self.set_inode(inumber, inode);
                 self.save_inode(inumber);
                 inumber as i64
@@ -128,7 +129,7 @@ impl<'a> InodeList<'a> {
                     i = 0;
                 }
             }
-            (*this).fs_meta_data.inodes_free_list.pointers_as_mut()[i] = inumber as u32;
+            (*this).fs_meta_data.inodes_free_list.pointers_as_mut()[i] = (inumber - 1) as u32;
             (*this).fs_meta_data.superblock.free_inodes += 1;
 
             (*block_manager).save_meta_data("rfl");
