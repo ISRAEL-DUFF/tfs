@@ -175,7 +175,7 @@ impl<'a> FileSystem<'a> {
             }
             length = file_size as usize - offset as usize;
 
-            println!("initLen: {}, computedLen: {}, offset: {}, file_size: {}", initLen, length, offset, file_size);
+            // println!("initLen: {}, computedLen: {}, offset: {}, file_size: {}", initLen, length, offset, file_size);
         }
 
         

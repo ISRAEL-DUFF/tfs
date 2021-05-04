@@ -11,7 +11,10 @@ use std::{
 // use std::time::{Duration, UNIX_EPOCH};
 use time::*;
 use libc::ENOENT;
-use fuse::{FileType, FileAttr, Filesystem, Request, ReplyData, ReplyWrite, ReplyCreate, ReplyEntry, ReplyAttr, ReplyDirectory};
+use fuse::{
+    FileType, FileAttr, Filesystem, Request, ReplyData, ReplyWrite, 
+    ReplyCreate, ReplyEntry, ReplyAttr, ReplyDirectory, ReplyOpen, ReplyEmpty
+};
 
 extern crate bincode;
 // use bincode::{serialize, deserialize, Bounded};
@@ -147,7 +150,7 @@ impl<'a> DuffFS<'a> {
             ctime: UNIX_EPOCH,
             crtime: UNIX_EPOCH,
             kind,
-            perm: 0o644,
+            perm: 777,
             nlink: 1,
             uid: 501,
             gid: 20,
@@ -157,8 +160,7 @@ impl<'a> DuffFS<'a> {
     }
 
     pub fn dir_from(&mut self, inumber: u32) -> Directory {
-        // let inode = self.fs.get_inode(inumber as usize);
-        println!("Inumber: {}", inumber);
+        // println!("Inumber: {}", inumber);
         // 1. read the whole content of inode
         let mut content: Vec<u8> = vec![];
         let mut buffer = [0; tfs::constants::BUFFER_SIZE];
@@ -232,8 +234,8 @@ impl<'a> DuffFS<'a> {
     pub fn mount(self) {
         env_logger::init();
         // let mountpoint = env::args_os().nth(1).unwrap();
-        let mountpoint = "data/duffFS3";
-        let options = ["-o", "ro", "-o", "fsname=DuffFS"]
+        let mountpoint = "data/mnt2";
+        let options = ["-o", "rw", "-o", "fsname=DuffFS"]
             .iter()
             .map(|o| o.as_ref())
             .collect::<Vec<&OsStr>>();
@@ -243,7 +245,10 @@ impl<'a> DuffFS<'a> {
 
 impl Filesystem for DuffFS<'_> {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+        // println!("Parent: {}", parent);
         let attr = self.get_attr(parent as usize);
+        // println!("Parent: {:?}", attr);
+
         if true {   // TODO: check if parent exist
             // // let attr = self.get_attr(2);
             // let n = name.to_str();
@@ -268,11 +273,45 @@ impl Filesystem for DuffFS<'_> {
         //     2 => reply.attr(&TTL, &HELLO_TXT_ATTR),
         //     _ => reply.error(ENOENT),
         // }
-        match ino {
-            1 => reply.attr(&TTL, &HELLO_DIR_ATTR),
-            2 => reply.attr(&TTL, &attr),
-            _ => reply.error(ENOENT),
-        }
+
+        // match ino {
+        //     1 => reply.attr(&TTL, &HELLO_DIR_ATTR),
+        //     2 => reply.attr(&TTL, &attr),
+        //     _ => reply.error(ENOENT),
+        // }
+        // reply.attr(&TTL, &HELLO_DIR_ATTR)
+        reply.attr(&TTL, &attr)
+    }
+
+    fn setattr(
+        &mut self, 
+        _req: &Request, 
+        ino: u64, 
+        _mode: Option<u32>, 
+        _uid: Option<u32>, 
+        _gid: Option<u32>, 
+        _size: Option<u64>, 
+        _atime: Option<Timespec>, 
+        _mtime: Option<Timespec>, 
+        _fh: Option<u64>, 
+        _crtime: Option<Timespec>, 
+        _chgtime: Option<Timespec>, 
+        _bkuptime: Option<Timespec>, 
+        _flags: Option<u32>, 
+        reply: ReplyAttr
+    ) { 
+        let attr = self.get_attr(ino as usize);
+        reply.attr(&TTL, &attr)
+     }
+
+    fn open(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
+        println!("OPEN called");
+        reply.opened(ino, flags);
+    }
+
+    fn opendir(&mut self, _req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
+        println!("OPENDIR called");
+        reply.opened(ino, flags);
     }
 
     fn mknod<'a>(
@@ -284,6 +323,7 @@ impl Filesystem for DuffFS<'_> {
         _rdev: u32,
         reply: ReplyEntry
     ) {
+        println!("Make NODE: {:?}", name);
         let inumber = self.create_file(name, FileType::RegularFile, parent as u32);
         let attr = self.get_attr(inumber as usize);
         reply.entry(&TTL, &attr, 0);
@@ -297,6 +337,7 @@ impl Filesystem for DuffFS<'_> {
         _mode: u32,
         reply: ReplyEntry
     ) {
+        println!("Make dir: {:?}", name);
         let inumber = self.create_file(name, FileType::Directory, parent as u32);
         let attr = self.get_attr(inumber as usize);
         reply.entry(&TTL, &attr, 0);
@@ -311,6 +352,7 @@ impl Filesystem for DuffFS<'_> {
         _flags: u32,
         reply: ReplyCreate
     ) {
+        println!("Create Called: {:?}", name);
         let inumber = self.create_file(name, FileType::RegularFile, parent as u32);
         let attr = self.get_attr(inumber as usize);
         reply.created(&TTL, &attr, 0, 0, 0);
@@ -341,6 +383,7 @@ impl Filesystem for DuffFS<'_> {
         _flags: u32,
         reply: ReplyWrite
     ) {
+        println!("WRITE CALLED");
         if ino > 0 {
             let mut dat = data;
             let n = self.fs.write(ino as usize, &mut dat, dat.len(), offset as usize);
@@ -370,5 +413,9 @@ impl Filesystem for DuffFS<'_> {
             reply.add(entry.0, (i + 1) as i64, entry.1, entry.2);
         }
         reply.ok();
+    }
+
+    fn flush(&mut self, _req: &Request, _ino: u64, _fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
+        reply.ok()
     }
 }
