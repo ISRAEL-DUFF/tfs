@@ -150,7 +150,7 @@ impl<'a> DuffFS<'a> {
             ctime: UNIX_EPOCH,
             crtime: UNIX_EPOCH,
             kind,
-            perm: 777,
+            perm: 0o777,
             nlink: 1,
             uid: 501,
             gid: 20,
@@ -173,7 +173,7 @@ impl<'a> DuffFS<'a> {
 
             if result < tfs::constants::BUFFER_SIZE as i64 {
                 let mut buff = &buffer[0..result as usize];
-                content.extend_from_slice(&mut buffer);           
+                content.extend_from_slice(&mut buff);           
             } else {
                 content.extend_from_slice(&mut buffer);
             }
@@ -185,11 +185,13 @@ impl<'a> DuffFS<'a> {
         //     Ok(directory) => directory,
         //     Err(e) => Directory::new(inumber, inumber)
         // }
+        println!("Content Len: {}", content.len());
         Directory::deserialize(content)
     }
 
     pub fn dir_entries(&mut self, inumber: u64) -> Vec<(u64, FileType, String)> {
         let directory = self.dir_from(inumber as u32);
+        println!("Dir from: {}, {:?}", inumber, directory);
         let mut entries: Vec<(u64, FileType, String)> = Vec::new();
         for (path, inum) in directory.entries {
             if self.fs.get_inode(inum as usize).is_dir() {
@@ -218,12 +220,12 @@ impl<'a> DuffFS<'a> {
         unsafe {
             let inumber = (*fs).create_from(inode);
             dir.add_entry(Path::new(&name.to_str().unwrap()), inumber as u32);
-    
+            println!("Directory: {:?}", dir);
             let mut data = dir.serialize();
             let size = data.len();
-            (*fs).truncate(inumber as usize, data.len());
+            (*fs).truncate(parent as usize, data.len());
             let mut inode_list = (*fs).inode_list();
-            let mut write_obj = inode_list.write_iter(inumber as usize);
+            let mut write_obj = inode_list.write_iter(parent as usize);
             let write = &mut write_obj as *mut tfs::InodeWriteIter;
             (*write).seek(0);
             (*fs).write_data(write_obj, data.as_mut(), size, 0);
@@ -234,7 +236,7 @@ impl<'a> DuffFS<'a> {
     pub fn mount(self) {
         env_logger::init();
         // let mountpoint = env::args_os().nth(1).unwrap();
-        let mountpoint = "data/mnt2";
+        let mountpoint = "data/duffFS3";
         let options = ["-o", "rw", "-o", "fsname=DuffFS"]
             .iter()
             .map(|o| o.as_ref())
@@ -246,23 +248,28 @@ impl<'a> DuffFS<'a> {
 impl Filesystem for DuffFS<'_> {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         // println!("Parent: {}", parent);
-        let attr = self.get_attr(parent as usize);
+        let dir = self.dir_from(parent as u32);
         // println!("Parent: {:?}", attr);
 
-        if true {   // TODO: check if parent exist
-            // // let attr = self.get_attr(2);
-            // let n = name.to_str();
-            // // println!("DDDDDD: {:?}", n);
-            // let attr = match n {
-            //     Some("hello.txt") => self.get_attr(2),
-            //     Some("video.mp4") => self.get_attr(3),
-            //     Some("audio.mp3") => self.get_attr(4),
-            //     _ => self.get_attr(1),
-            // };
-            // // reply.entry(&TTL, &HELLO_TXT_ATTR, 0);
-            reply.entry(&TTL, &attr, 0);
-        } else {
-            reply.error(ENOENT);
+        match dir.find_by_path(name) {   // TODO: check if parent exist
+            Ok(inum) => {
+                // // let attr = self.get_attr(2);
+                // let n = name.to_str();
+                // // println!("DDDDDD: {:?}", n);
+                // let attr = match n {
+                //     Some("hello.txt") => self.get_attr(2),
+                //     Some("video.mp4") => self.get_attr(3),
+                //     Some("audio.mp3") => self.get_attr(4),
+                //     _ => self.get_attr(1),
+                // };
+                // // reply.entry(&TTL, &HELLO_TXT_ATTR, 0);
+                let attr = self.get_attr(inum as usize);
+                println!("Look Up: {:?}", name);
+                reply.entry(&TTL, &attr, 0);
+            },
+            Err(e) => {
+                reply.error(ENOENT);
+            }
         }
     }
 
@@ -407,7 +414,7 @@ impl Filesystem for DuffFS<'_> {
         //     (4, FileType::RegularFile, "audio.mp3"),
         // ];
         let entries = self.dir_entries(ino);
-
+        println!("Directory Entries: {}, {:?}", ino, entries);
         for (i, entry) in entries.into_iter().enumerate().skip(offset as usize) {
             // i + 1 means the index of the next entry
             reply.add(entry.0, (i + 1) as i64, entry.1, entry.2);
