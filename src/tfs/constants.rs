@@ -11,4 +11,4 @@ pub const INODES_ROOT_BLOCK: usize = 1;
 pub const ROOT_FREE_LIST: usize = 2;
 pub const INODES_FREE_LIST: usize = 3;
 
-pub const BUFFER_SIZE: usize = Disk::BLOCK_SIZE * 100;
+pub const BUFFER_SIZE: usize = Disk::BLOCK_SIZE * 32;

@@ -24,7 +24,7 @@ impl<'a> Disk<'a> {
         }
 
         if blocknum >= self.blocks {
-            panic!("Block Number is too big")
+            panic!("Block Number {} is too big", blocknum)
         }
 
     }

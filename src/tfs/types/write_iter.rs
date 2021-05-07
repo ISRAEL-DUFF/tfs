@@ -121,49 +121,53 @@ impl<'a> InodeWriteIter<'a> {
 
     pub fn write_byte<'h:'a>(&'h mut self, byte: u8) -> (bool, i64) {
         let this = self as *mut Self;
-        let data_blocks = unsafe {(*this).get_inode().data_blocks()};
-        if data_blocks.len() == 0 {
-            unsafe {
-                if !(*this).add_data_blk() {
-                    return (false, -1)
-                }
-            }
-        }
-        if self.next_write_index < Disk::BLOCK_SIZE {
-            self.curr_data_block.data_as_mut()[self.next_write_index] = byte;
-            self.next_write_index += 1;
-            self.number_of_bytes += 1;
-            self.aligned_to_block = false;
-            self.flushed = false;
-            (true, 1)
-        } else {
-            // flush current block
-            if !self.flush() {
-                println!("No flush {}", data_blocks.len());
+        
+        unsafe {
+            let data_blocks =  (*this).get_inode().data_blocks();
+            let size = (*this).get_inode().size() as usize;
+
+            if data_blocks.len() == 0 || self.aligned_to_block {
                 unsafe {
-                    if (*this).add_data_blk() {
-                        return (*this).write_byte(byte);
-                    } else {
-                        return (false, -1);
+                    if !(*this).add_data_blk() {
+                        return (false, -1)
                     }
                 }
-            };
+            }
 
-            // add another block as current block
-            if self.data_block_index < data_blocks.len() - 1 {
-                self.data_block_index += 1;
-                self.data_block_num = data_blocks[self.data_block_index];
-                let mut data_block = Block::new();
-                self.disk.read(self.data_block_num.clone() as usize, data_block.data_as_mut());
-                self.curr_data_block = data_block;
-
+            if self.next_write_index < Disk::BLOCK_SIZE {
                 self.curr_data_block.data_as_mut()[self.next_write_index] = byte;
                 self.next_write_index += 1;
+                self.number_of_bytes += 1;
                 self.aligned_to_block = false;
                 self.flushed = false;
-                return (true, 1)
+                (true, 1)
             } else {
-                unsafe {
+                // flush current block
+                if !self.flush() {
+                    println!("No flush {}", data_blocks.len());
+                    unsafe {
+                        if (*this).add_data_blk() {
+                            return (*this).write_byte(byte);
+                        } else {
+                            return (false, -1);
+                        }
+                    }
+                };
+    
+                // add another block as current block
+                if self.data_block_index < data_blocks.len() - 1 {
+                    self.data_block_index += 1;
+                    self.data_block_num = data_blocks[self.data_block_index];
+                    let mut data_block = Block::new();
+                    self.disk.read(self.data_block_num.clone() as usize, data_block.data_as_mut());
+                    self.curr_data_block = data_block;
+    
+                    self.curr_data_block.data_as_mut()[self.next_write_index] = byte;
+                    self.next_write_index += 1;
+                    self.aligned_to_block = false;
+                    self.flushed = false;
+                    return (true, 1)
+                } else {
                     if (*this).add_data_blk() {  // add new data block
                         return (*this).write_byte(byte); // attempt write again
                     } else {
@@ -221,6 +225,7 @@ impl<'a> InodeWriteIter<'a> {
                 self.disk.write(self.data_block_num as usize, block_data);
                 self.aligned_to_block = true;
                 (*this).incr_size(Disk::BLOCK_SIZE);
+                // println!("HMMML {}, size: {}", (*this).get_inode().data_blocks().len(), (*this).get_inode().size());
                 return 0;
             } else {
                 return -1;
@@ -236,7 +241,6 @@ impl<'a> InodeWriteIter<'a> {
         if self.data_block_num > 0 && data_blocks.len() > 0 {
             unsafe {
                 if !self.aligned_to_block && !self.flushed {
-                    // println!("Flush: {}, {}, {:?}", self.number_of_bytes, self.data_block_num, data_blocks);
                     (*this).disk.write(self.data_block_num as usize, self.curr_data_block.data_as_mut());
                     (*this).incr_size(self.number_of_bytes);
                     self.number_of_bytes = 0;

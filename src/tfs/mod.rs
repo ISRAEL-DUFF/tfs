@@ -197,18 +197,10 @@ impl<'a> FileSystem<'a> {
 
     pub fn write_data(&mut self, mut write_obj: InodeWriteIter, data: &[u8], length: usize, offset: usize) -> i64 {
         let fs_raw_ptr = self as *mut Self;
-
-        // let mut inode_list = self.inode_list();
-        // let i_list = &mut inode_list as *mut InodeList;
-        // let mut writer_iter = unsafe { (*i_list).write_iter(inumber) };
-        // let writer_i = &mut writer_iter as *mut InodeWriteIter;
-
         let writer = &mut write_obj as *mut InodeWriteIter;
 
         let write_bytes = |data: &[u8], w: *mut InodeWriteIter| {
             let mut i = 0;
-            // let mut w = unsafe { (*i_list).write_iter(inumber) };
-            // let writer = &mut w as *mut InodeWriteIter;
 
             println!("Data Len: {}", data.len());
             unsafe {
@@ -252,21 +244,18 @@ impl<'a> FileSystem<'a> {
             loop {
                 if end > data.len() && (bytes_writen as usize) < length  {
                     end = data.len();
-                    // unsafe {(*writer).flush()};
                     bytes_writen += write_bytes(&data[start..end], writer);
                     break
                 }
 
                 if end > length && (bytes_writen as usize) < length {
                     end = length;
-                    // unsafe {(*writer).flush()};
                     let  b = write_bytes(&data[start..end], writer);
                     bytes_writen += b;
                     break
                 }
 
                 if i == n_blocks {
-                    // unsafe {(*writer).flush()};
                     if (bytes_writen as usize) < length {
                         bytes_writen += write_bytes(&data[start..end], writer);
                     }
@@ -285,14 +274,6 @@ impl<'a> FileSystem<'a> {
                 i += 1;
                 bytes_writen += Disk::BLOCK_SIZE as i64;
             }
-
-            // temporary code for debug purposes
-            // unsafe {
-            //     match (*writer_i).get_inode().data_manager() {
-            //         Some(data_man) => data_man.debug(),
-            //         _ => println!("Nothing")
-            //     }
-            // };
             unsafe {(*writer).flush()};
             return bytes_writen as i64;
         }

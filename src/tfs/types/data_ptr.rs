@@ -67,15 +67,19 @@ impl<'d> InodeDataPointer<'d> {
             _ => { // indirect pointers
                 let mut data_blks = Block::new();
                 let mut data_blocks = Vec::new();
-                for blk in self.direct_ptrs.iter() {
-                    if *blk == 0 {
-                        break
+                // println!("EDGE: {}, {}, {:?}", Self::edge(self.direct_ptrs.len()), self.direct_ptrs.len(), self.indirect_ptrs);
+                if !self.edge(self.direct_ptrs.len()) {
+                    for blk in self.direct_ptrs.iter() {
+                        if *blk == 0 {
+                            break
+                        }
+                        self.disk.read(*blk as usize, data_blks.data_as_mut());
+                        let i = index_zero(data_blks.pointers());
+                        data_blocks.extend_from_slice(&data_blks.pointers()[..i]);
                     }
-                    self.disk.read(*blk as usize, data_blks.data_as_mut());
-                    let i = index_zero(data_blks.pointers());
-                    data_blocks.extend_from_slice(&data_blks.pointers()[..i]);
+                    self.direct_ptrs = data_blocks;
                 }
-                self.direct_ptrs = data_blocks;
+                
             }
         }
         //
@@ -85,7 +89,7 @@ impl<'d> InodeDataPointer<'d> {
     pub fn set_depth(mut self, level: usize) -> Self {
         for n in 0..level+1 {
             self = self.to_depth(n);
-            if n < level {
+            if n < level && !self.edge(self.direct_pointers().len()) {
                 let mut start = 0;
                 let mut end = POINTERS_PER_BLOCK;
                 let mut ptrs = Vec::new();
@@ -118,6 +122,12 @@ impl<'d> InodeDataPointer<'d> {
 
     pub fn depth(&self) -> usize {
         ((self.direct_ptrs.len() as f64).log(POINTERS_PER_BLOCK as f64)).floor() as usize
+    }
+
+    fn edge(&self, n: usize) -> bool {
+        let floor = ((n as f64).log(POINTERS_PER_BLOCK as f64)).floor() as usize;
+        let ceil = ((n as f64).log(POINTERS_PER_BLOCK as f64)).ceil() as usize;
+        floor == ceil && n == self.data_blocks_count as usize
     }
 
     pub fn add_data_block(&mut self, blk: i64) -> i64 {
