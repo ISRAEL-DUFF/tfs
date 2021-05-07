@@ -225,7 +225,6 @@ impl<'a> InodeWriteIter<'a> {
                 self.disk.write(self.data_block_num as usize, block_data);
                 self.aligned_to_block = true;
                 (*this).incr_size(Disk::BLOCK_SIZE);
-                // println!("HMMML {}, size: {}", (*this).get_inode().data_blocks().len(), (*this).get_inode().size());
                 return 0;
             } else {
                 return -1;
@@ -309,13 +308,14 @@ impl<'a> InodeWriteIter<'a> {
         unsafe {
             let mut inode = (*this).get_inode();
             if (*this).overwrite() {
-                let len = (*this).overwrite_len;
-                let a = len - amount;
+                let len = (*this).overwrite_len as i64;
+                let a = len - amount as i64;
                 if a < 0 {
-                    inode.incr_size(amount - len);
+                    let n: usize = amount - len as usize;
+                    inode.incr_size(n);
                     self.overwrite_len = 0;
                 } else {
-                    (*this).overwrite_len = a;
+                    (*this).overwrite_len = a as usize;
                 }
             } else {
                 inode.incr_size(amount);

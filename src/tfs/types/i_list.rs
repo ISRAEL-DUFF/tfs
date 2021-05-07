@@ -146,6 +146,10 @@ impl<'a> InodeList<'a> {
         }
     }
 
+    pub fn inode_exists(&self, inumber: usize) -> bool {
+        inumber > 0 && (inumber - 1) < self.fs_meta_data.superblock.inodes as usize
+    }
+
     pub fn add_inodeblock(&mut self, new_blk: i64) -> bool {
         if new_blk > 0 {
             let mut inode_blk = InodeBlock::new();

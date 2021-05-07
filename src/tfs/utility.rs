@@ -22,9 +22,10 @@ pub fn get_inode_block(inode_table: &Vec<(u32, InodeBlock)>, i: usize) -> (u32, 
 
 pub fn set_inode(inode_table: &mut Vec<(u32, InodeBlock)>, inumber: usize, inode: Inode) {
     let (blk_n, mut block) = get_inode_block(inode_table, inumber);
-    let i = (inumber - 1) % (INODES_PER_BLOCK - 1);
+    let n = inumber - 1;
+    let i = n % (INODES_PER_BLOCK - 1);
     block.iblock_as_mut().inodes[i] = inode;
-    let index = (inumber as f64 / (INODES_PER_BLOCK - 1) as f64).floor() as usize;
+    let index = (n as f64 / (INODES_PER_BLOCK - 1) as f64).floor() as usize;
     inode_table[index] = (blk_n, block.inode_block());
 }
 

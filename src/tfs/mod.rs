@@ -274,10 +274,15 @@ impl<'a> FileSystem<'a> {
                 i += 1;
                 bytes_writen += Disk::BLOCK_SIZE as i64;
             }
-            unsafe {(*writer).flush()};
-            return bytes_writen as i64;
+        } else {
+            bytes_writen = write_bytes(&data[offset..(offset+length)], writer);
         }
-        -1
+
+        if unsafe {(*writer).flush()} {
+            bytes_writen as i64
+        } else {
+            -1
+        }
 
         // return write_bytes(&mut data[offset..(offset+length)], fs_raw_ptr);
     }
@@ -422,10 +427,6 @@ impl<'a> FileSystem<'a> {
         };
         InodeList::new(meta_dat, inode_table, disc.clone())
     }
-
-    // pub fn write_obj(&mut self, inumber) -> {
-    //     self.inode_list().write_iter(inumber)
-    // }
 
     pub fn get_inode(&mut self, inumber: usize) -> InodeProxy {
         let this = self as *mut Self;

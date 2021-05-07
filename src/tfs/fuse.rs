@@ -10,7 +10,7 @@ use std::{
 
 // use std::time::{Duration, UNIX_EPOCH};
 use time::*;
-use libc::ENOENT;
+use libc::{ENOENT, c_int};
 use fuse::{
     FileType, FileAttr, Filesystem, Request, ReplyData, ReplyWrite, 
     ReplyCreate, ReplyEntry, ReplyAttr, ReplyDirectory, ReplyOpen, ReplyEmpty
@@ -67,13 +67,13 @@ impl Directory {
         // let limit = Bounded(20);
         let encoded: Vec<u8> = bincode::serialize(self).unwrap();
         let encoded2: Vec<u8> = bincode::serialize(self).unwrap();
-        println!("CHECK: {:?}", Directory::deserialize(encoded2));
+        println!("serialized - CHECK: {:?}", Directory::deserialize(encoded2));
         encoded
     }
 
     pub fn deserialize(v: Vec<u8>) -> Self {
         // bincode::deserialize(&v[..]).unwrap()
-        println!("AGAIN: {:?}", v);
+        // println!("AGAIN: {:?}", v);
         match bincode::deserialize(&v[..]) {
             Ok(dir) => dir,
             Err(e) => {
@@ -163,7 +163,6 @@ impl<'a> DuffFS<'a> {
     }
 
     pub fn dir_from(&mut self, inumber: u32) -> Directory {
-        // println!("Inumber: {}", inumber);
         // 1. read the whole content of inode
         let mut content: Vec<u8> = vec![];
         let mut buffer = [0; tfs::constants::BUFFER_SIZE];
@@ -176,7 +175,8 @@ impl<'a> DuffFS<'a> {
 
             if result < tfs::constants::BUFFER_SIZE as i64 {
                 let mut buff = &buffer[0..result as usize];
-                content.extend_from_slice(&mut buff);           
+                content.extend_from_slice(&mut buff); 
+                break;          
             } else {
                 content.extend_from_slice(&mut buffer);
             }
@@ -189,12 +189,15 @@ impl<'a> DuffFS<'a> {
         //     Err(e) => Directory::new(inumber, inumber)
         // }
         // println!("Content Len: {}", content.len());
-        Directory::deserialize(content)
+        let directory = Directory::deserialize(content);
+
+        println!("Dir from: {}, {:?}", inumber, directory);
+        directory
     }
 
     pub fn dir_entries(&mut self, inumber: u64) -> Vec<(u64, FileType, String)> {
         let directory = self.dir_from(inumber as u32);
-        println!("Dir from: {}, {:?}", inumber, directory);
+        println!("Entries from dir {}, {:?}", inumber, directory);
         let mut entries: Vec<(u64, FileType, String)> = Vec::new();
         for (path, inum) in directory.entries {
             if self.fs.get_inode(inum as usize).is_dir() {
@@ -223,7 +226,7 @@ impl<'a> DuffFS<'a> {
         unsafe {
             let inumber = (*fs).create_from(inode);
             dir.add_entry(Path::new(&name.to_str().unwrap()), inumber as u32);
-            println!("Directory: {:?}", dir);
+            println!("Added Entry to Directory: {}, {:?}", parent, dir);
             let mut data = dir.serialize();
             let size = data.len();
             // (*fs).truncate(parent as usize, data.len());
@@ -231,8 +234,8 @@ impl<'a> DuffFS<'a> {
             let mut write_obj = inode_list.write_iter(parent as usize);
             let write = &mut write_obj as *mut tfs::InodeWriteIter;
             (*write).seek(0);
-            (*fs).write_data(write_obj, data.as_mut(), size, 0);
-
+            let n = (*fs).write_data(write_obj, data.as_mut(), size, 0);
+            println!("Number of bytes written: {}", n);
             if kind == FileType::Directory {
                 let mut inode_list = (*fs).inode_list();
                 let mut write_obj = inode_list.write_iter(inumber as usize);
@@ -248,7 +251,7 @@ impl<'a> DuffFS<'a> {
     pub fn mount(self) {
         // env_logger::init();
         // let mountpoint = env::args_os().nth(1).unwrap();
-        let mountpoint = "data/mnt";
+        let mountpoint = "data/duffFS3";
         let options = ["-o", "rw", "-o", "fsname=DuffFS"]
             .iter()
             .map(|o| o.as_ref())
@@ -258,6 +261,24 @@ impl<'a> DuffFS<'a> {
 }
 
 impl Filesystem for DuffFS<'_> {
+    fn init(&mut self, _req: &Request<'_>) -> Result<(), c_int> {
+        if !self.fs.inode_list().inode_exists(1) {
+            let this = self as *mut DuffFS;
+            unsafe {
+                let mut inode_list = (*this).fs.inode_list();
+                let inumber = (*this).fs.create_dir();
+                let mut write_obj = inode_list.write_iter(inumber as usize);
+                let mut new_dir = Directory::new(1, 1);
+                let mut dir_data = new_dir.serialize();
+                let size = dir_data.len();
+                (*this).fs.write_data(write_obj, dir_data.as_mut(), size, 0);
+                Ok(())
+            }
+        } else {
+            Ok(())
+        }
+    }
+
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let dir = self.dir_from(parent as u32);
 
@@ -350,6 +371,37 @@ impl Filesystem for DuffFS<'_> {
         let inumber = self.create_file(name, FileType::RegularFile, parent as u32);
         let attr = self.get_attr(inumber as usize);
         reply.created(&TTL, &attr, 0, 0, 0);
+    }
+
+    fn unlink(
+        &mut self,
+        _req: &Request<'_>,
+        parent: u64,
+        name: &OsStr,
+        reply: ReplyEmpty
+    ) {
+        let dir = self.dir_from(parent as u32);
+
+        match dir.find_by_path(name) {   // TODO: check if parent exist
+            Ok(inum) => {
+                let attr = self.fs.remove(inum as usize);
+                println!("Remove File: {}, with name => {:?}", inum, name);
+                reply.ok();
+            },
+            Err(e) => {
+                reply.error(ENOENT);
+            }
+        }
+    }
+
+    fn rmdir(
+        &mut self,
+        _req: &Request<'_>,
+        _parent: u64,
+        _name: &OsStr,
+        reply: ReplyEmpty
+    ) {
+        reply.ok()
     }
 
     fn read(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, size: u32, reply: ReplyData) {

@@ -93,7 +93,7 @@ impl<'c> InodeProxy<'c> {
         disk: Disk<'c>, 
         inumber: usize
     ) -> Self {
-        if inumber < 1 {
+        if inumber < 1 && inumber >= fs_meta_data.superblock.inodes as usize {
             panic!("Invalid Inumber: {}", inumber);
         }
         InodeProxy {
