@@ -9,24 +9,37 @@ pub fn fetch_block(disk: &mut Disk, block_num: usize) -> Block {
     return block;
 }
 
-pub fn get_inode_block(inode_table: &Vec<(u32, InodeBlock)>, i: usize) -> (u32, Block) {
+pub fn get_index(inumber: usize) -> (usize, usize) {
     if i < 1 {
         panic!("Invalid index: {}", i);
     }
-    let i = i - 1;
-    let index = (i as f64 / (INODES_PER_BLOCK - 1) as f64).floor() as usize;
+    let inumber = inumber - 1;
+    let inode_block_index = (inumber as f64 / (INODES_PER_BLOCK - 1) as f64).floor() as usize;
+    let inode_index = inumber % (INODES_PER_BLOCK - 1);
+    (inode_block_index, inode_index)
+}
+
+pub fn get_inode_block(inode_table: &Vec<(u32, InodeBlock)>, i: usize) -> (u32, Block) {
+    // if i < 1 {
+    //     panic!("Invalid index: {}", i);
+    // }
+    // let i = i - 1;
+    // let index = (i as f64 / (INODES_PER_BLOCK - 1) as f64).floor() as usize;
+    (index,_) = get_index(i);
     let (block_num, inodeblock) = inode_table[index];
-    // println!("GET INODE BLOCK: {}, {}", index, block_num);
     (block_num, inodeblock.as_block())
 }
 
 pub fn set_inode(inode_table: &mut Vec<(u32, InodeBlock)>, inumber: usize, inode: Inode) {
-    let (blk_n, mut block) = get_inode_block(inode_table, inumber);
-    let n = inumber - 1;
-    let i = n % (INODES_PER_BLOCK - 1);
-    block.iblock_as_mut().inodes[i] = inode;
-    let index = (n as f64 / (INODES_PER_BLOCK - 1) as f64).floor() as usize;
-    inode_table[index] = (blk_n, block.inode_block());
+    (i, j) = get_index(inumber);
+    if i < inode_table.len() {
+        let (blk_n, mut block) = get_inode_block(inode_table, inumber);
+        // let n = inumber - 1;
+        // let i = n % (INODES_PER_BLOCK - 1);
+        block.iblock_as_mut().inodes[j] = inode;
+        // let index = (n as f64 / (INODES_PER_BLOCK - 1) as f64).floor() as usize;
+        inode_table[i] = (blk_n, block.inode_block());
+    }
 }
 
 pub fn resolve_attr<'a>(

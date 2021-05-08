@@ -146,8 +146,13 @@ impl<'a> InodeList<'a> {
         }
     }
 
-    pub fn inode_exists(&self, inumber: usize) -> bool {
-        inumber > 0 && (inumber - 1) < self.fs_meta_data.superblock.inodes as usize
+    pub fn inode_exists(&mut self, inumber: usize) -> bool {
+        let inrange = inumber > 0 && (inumber - 1) < self.fs_meta_data.superblock.inodes as usize;
+        if inrange {
+            self.get_inode(inumber).is_valid()
+        } else {
+            false
+        }
     }
 
     pub fn add_inodeblock(&mut self, new_blk: i64) -> bool {

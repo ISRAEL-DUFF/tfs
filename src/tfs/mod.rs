@@ -472,6 +472,7 @@ impl<'a> FileSystem<'a> {
             disk.read(block_num, blk.data_as_mut());
             inode_blk = blk.inode_block();
         }
+        inode_table.reverse();
         inode_table
     }
 }

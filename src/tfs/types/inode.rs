@@ -106,9 +106,10 @@ impl<'c> InodeProxy<'c> {
     }
 
     fn get_index(&self) -> (usize, usize) {
-        let inode_block_index = (self.inumber as f64 / (INODES_PER_BLOCK - 1) as f64).floor() as usize;
-        let inode_index = self.inumber % (INODES_PER_BLOCK - 1);
-        (inode_block_index, inode_index)
+        // let inode_block_index = (self.inumber as f64 / (INODES_PER_BLOCK - 1) as f64).floor() as usize;
+        // let inode_index = self.inumber % (INODES_PER_BLOCK - 1);
+        // (inode_block_index, inode_index)
+        get_index(self.inumber)
     }
 
     pub fn size(&self) -> u64 {
@@ -119,6 +120,11 @@ impl<'c> InodeProxy<'c> {
     pub fn is_dir(&self) -> bool {
         let (i, j) = self.get_index();
         self.inode_table[i].1.inodes[j].kind == 2
+    }
+
+    pub fn is_valid(&self) -> bool {
+        let (i, j) = self.get_index();
+        self.inode_table[i].1.inodes[j].valid == 1
     }
 
     pub fn data_block(&self) -> u32 {

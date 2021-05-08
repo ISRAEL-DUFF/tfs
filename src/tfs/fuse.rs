@@ -268,7 +268,7 @@ impl Filesystem for DuffFS<'_> {
                 let mut inode_list = (*this).fs.inode_list();
                 let inumber = (*this).fs.create_dir();
                 let mut write_obj = inode_list.write_iter(inumber as usize);
-                let mut new_dir = Directory::new(1, 1);
+                let mut new_dir = Directory::new(inumber as u32, inumber as u32);
                 let mut dir_data = new_dir.serialize();
                 let size = dir_data.len();
                 (*this).fs.write_data(write_obj, dir_data.as_mut(), size, 0);
