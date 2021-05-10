@@ -129,7 +129,7 @@ impl<'a> InodeList<'a> {
                     i = 0;
                 }
             }
-            (*this).fs_meta_data.inodes_free_list.pointers_as_mut()[i] = (inumber - 1) as u32;
+            (*this).fs_meta_data.inodes_free_list.pointers_as_mut()[i] = inumber as u32;
             (*this).fs_meta_data.superblock.free_inodes += 1;
 
             (*block_manager).save_meta_data("rfl");
@@ -166,6 +166,12 @@ impl<'a> InodeList<'a> {
             self.disk.write(new_blk as usize, root_blk.data_as_mut());
             self.fs_meta_data.inodes_root_block = block;
             self.inode_index = 0;
+
+            let mut r = self.inode_table.pop().unwrap();
+            println!("Formal root: {:?}", r);
+            r.0 = new_blk as u32;
+            self.inode_table.push(r);
+            self.inode_table.push((INODES_ROOT_BLOCK as u32, InodeBlock::new()));
             true
         } else {
             false

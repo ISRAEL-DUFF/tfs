@@ -13,7 +13,7 @@ use time::*;
 use libc::{ENOENT, c_int};
 use fuse::{
     FileType, FileAttr, Filesystem, Request, ReplyData, ReplyWrite, 
-    ReplyCreate, ReplyEntry, ReplyAttr, ReplyDirectory, ReplyOpen, ReplyEmpty
+    ReplyCreate, ReplyEntry, ReplyAttr, ReplyDirectory, ReplyOpen, ReplyEmpty, ReplyStatfs
 };
 
 extern crate bincode;
@@ -214,6 +214,21 @@ impl<'a> DuffFS<'a> {
         entries
     }
 
+    pub fn save_dir(&mut self, dir: Directory, inumber: usize) {
+        let fs = &mut self.fs as *mut tfs::FileSystem;
+        unsafe {
+            let mut data = dir.serialize();
+            let size = data.len();
+            // (*fs).truncate(parent as usize, data.len());
+            let mut inode_list = (*fs).inode_list();
+            let mut write_obj = inode_list.write_iter(inumber);
+            let write = &mut write_obj as *mut tfs::InodeWriteIter;
+            (*write).seek(0);
+            let n = (*fs).write_data(write_obj, data.as_mut(), size, 0);
+            println!("Number of bytes written: {}", n);
+        }
+    }
+
     pub fn create_file(&mut self, name: &OsStr, kind: FileType, parent: u32) -> u32 {
         let fs = &mut self.fs as *mut tfs::FileSystem;
         let mut dir = self.dir_from(parent);
@@ -227,22 +242,9 @@ impl<'a> DuffFS<'a> {
             let inumber = (*fs).create_from(inode);
             dir.add_entry(Path::new(&name.to_str().unwrap()), inumber as u32);
             println!("Added Entry to Directory: {}, {:?}", parent, dir);
-            let mut data = dir.serialize();
-            let size = data.len();
-            // (*fs).truncate(parent as usize, data.len());
-            let mut inode_list = (*fs).inode_list();
-            let mut write_obj = inode_list.write_iter(parent as usize);
-            let write = &mut write_obj as *mut tfs::InodeWriteIter;
-            (*write).seek(0);
-            let n = (*fs).write_data(write_obj, data.as_mut(), size, 0);
-            println!("Number of bytes written: {}", n);
+            self.save_dir(dir, parent as usize);
             if kind == FileType::Directory {
-                let mut inode_list = (*fs).inode_list();
-                let mut write_obj = inode_list.write_iter(inumber as usize);
-                let mut new_dir = Directory::new(inumber as u32, parent as u32);
-                let mut dir_data = new_dir.serialize();
-                let size = dir_data.len();
-                (*fs).write_data(write_obj, dir_data.as_mut(), size, 0);
+                self.save_dir(Directory::new(inumber as u32, parent as u32), inumber as usize)
             }
             inumber as u32
         }
@@ -251,8 +253,8 @@ impl<'a> DuffFS<'a> {
     pub fn mount(self) {
         // env_logger::init();
         // let mountpoint = env::args_os().nth(1).unwrap();
-        let mountpoint = "data/duffFS3";
-        let options = ["-o", "rw", "-o", "fsname=DuffFS"]
+        let mountpoint = "data/duffFS2";
+        let options = ["-o", "rw", "-o", "fsname=DuffFS", "-o", "volname=DuffFS"]
             .iter()
             .map(|o| o.as_ref())
             .collect::<Vec<&OsStr>>();
@@ -265,13 +267,8 @@ impl Filesystem for DuffFS<'_> {
         if !self.fs.inode_list().inode_exists(1) {
             let this = self as *mut DuffFS;
             unsafe {
-                let mut inode_list = (*this).fs.inode_list();
                 let inumber = (*this).fs.create_dir();
-                let mut write_obj = inode_list.write_iter(inumber as usize);
-                let mut new_dir = Directory::new(inumber as u32, inumber as u32);
-                let mut dir_data = new_dir.serialize();
-                let size = dir_data.len();
-                (*this).fs.write_data(write_obj, dir_data.as_mut(), size, 0);
+                self.save_dir(Directory::new(inumber as u32, inumber as u32), inumber as usize);
                 Ok(())
             }
         } else {
@@ -380,12 +377,14 @@ impl Filesystem for DuffFS<'_> {
         name: &OsStr,
         reply: ReplyEmpty
     ) {
-        let dir = self.dir_from(parent as u32);
+        let mut dir = self.dir_from(parent as u32);
 
         match dir.find_by_path(name) {   // TODO: check if parent exist
             Ok(inum) => {
                 let attr = self.fs.remove(inum as usize);
                 println!("Remove File: {}, with name => {:?}", inum, name);
+                dir.remove_entry(name);
+                self.save_dir(dir, parent as usize);
                 reply.ok();
             },
             Err(e) => {
@@ -465,4 +464,67 @@ impl Filesystem for DuffFS<'_> {
     fn flush(&mut self, _req: &Request, _ino: u64, _fh: u64, _lock_owner: u64, reply: ReplyEmpty) {
         reply.ok()
     }
+
+    // setvolname(&mut self, _req: &Request<'_>, _name: &OsStr, reply: ReplyEmpty) {
+
+    // }
+
+    fn statfs(&mut self, _req: &Request<'_>, ino: u64, reply: ReplyStatfs) {
+        println!("StatFS: {}", ino);
+        match self.fs.meta_data {
+            Some(meta_data) => {
+                let bavail = meta_data.superblock.blocks - meta_data.superblock.current_block_index;
+                reply.statfs(
+                    meta_data.superblock.blocks as u64,
+                    bavail as u64,
+                    bavail as u64,
+                    5,
+                    8,
+                    4096,
+                    300,
+                    4096
+                )
+            },
+            None => {}
+        }
+        // pub fn statfs(
+        //     self,
+        //     blocks: u64,
+        //     bfree: u64,
+        //     bavail: u64,
+        //     files: u64,
+        //     ffree: u64,
+        //     bsize: u32,
+        //     namelen: u32,
+        //     frsize: u32
+        // )
+        
+        
+    }
+
+    fn rename(
+        &mut self,
+        _req: &Request<'_>,
+        parent: u64,
+        name: &OsStr,
+        _newparent: u64,
+        newname: &OsStr,
+        reply: ReplyEmpty
+    ) {
+        println!("RENaem called: {:?}, {:?}", name, newname);
+        let mut parent_dir = self.dir_from(parent as u32);
+
+        // for (&mut path, inum) in parent_dir.entries.iter_mut() {
+        //     if *path == name {
+        //         *path = newname.to_os_string();
+        //     }
+        // }
+
+        let inum = parent_dir.find_by_path(name).unwrap();
+        parent_dir.remove_entry(name);
+        parent_dir.add_entry(newname, inum);
+        self.save_dir(parent_dir, parent as usize);
+        reply.ok();
+    }
+
 }

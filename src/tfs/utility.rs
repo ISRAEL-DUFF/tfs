@@ -10,8 +10,8 @@ pub fn fetch_block(disk: &mut Disk, block_num: usize) -> Block {
 }
 
 pub fn get_index(inumber: usize) -> (usize, usize) {
-    if i < 1 {
-        panic!("Invalid index: {}", i);
+    if inumber < 1 {
+        panic!("Invalid index: {}", inumber);
     }
     let inumber = inumber - 1;
     let inode_block_index = (inumber as f64 / (INODES_PER_BLOCK - 1) as f64).floor() as usize;
@@ -25,13 +25,13 @@ pub fn get_inode_block(inode_table: &Vec<(u32, InodeBlock)>, i: usize) -> (u32, 
     // }
     // let i = i - 1;
     // let index = (i as f64 / (INODES_PER_BLOCK - 1) as f64).floor() as usize;
-    (index,_) = get_index(i);
+    let (index,_) = get_index(i);
     let (block_num, inodeblock) = inode_table[index];
     (block_num, inodeblock.as_block())
 }
 
 pub fn set_inode(inode_table: &mut Vec<(u32, InodeBlock)>, inumber: usize, inode: Inode) {
-    (i, j) = get_index(inumber);
+    let (i, j) = get_index(inumber);
     if i < inode_table.len() {
         let (blk_n, mut block) = get_inode_block(inode_table, inumber);
         // let n = inumber - 1;

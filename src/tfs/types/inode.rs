@@ -97,7 +97,7 @@ impl<'c> InodeProxy<'c> {
             panic!("Invalid Inumber: {}", inumber);
         }
         InodeProxy {
-            inumber: inumber - 1,
+            inumber: inumber,
             data_manager: None,
             inode_table,
             fs_meta_data,
