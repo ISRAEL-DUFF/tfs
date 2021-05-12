@@ -159,19 +159,24 @@ impl<'a> InodeList<'a> {
         if new_blk > 0 {
             let mut inode_blk = InodeBlock::new();
             inode_blk.next_block = new_blk as u32;
-            let block = inode_blk.as_block();
+            let mut block = inode_blk.as_block();
 
+            // update disk data
             let mut root_blk = self.fs_meta_data.inodes_root_block;
             root_blk.iblock_as_mut().prev_block = new_blk as u32;
             self.disk.write(new_blk as usize, root_blk.data_as_mut());
+            self.disk.write(INODES_ROOT_BLOCK, block.data_as_mut());
             self.fs_meta_data.inodes_root_block = block;
             self.inode_index = 0;
 
+            // update in-memory data
             let mut r = self.inode_table.pop().unwrap();
-            println!("Formal root: {:?}", r);
             r.0 = new_blk as u32;
+            r.1 = root_blk.inode_block();
             self.inode_table.push(r);
-            self.inode_table.push((INODES_ROOT_BLOCK as u32, InodeBlock::new()));
+            self.inode_table.push((INODES_ROOT_BLOCK as u32, self.fs_meta_data.inodes_root_block.inode_block()));
+
+            // panic!("Detail: {:?}", self.inode_table);
             true
         } else {
             false

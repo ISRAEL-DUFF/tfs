@@ -91,41 +91,6 @@ impl Directory {
 const TTL: Timespec = Timespec { sec: 1, nsec: 0 };
 const UNIX_EPOCH: Timespec = Timespec { sec: 0, nsec: 0 };
 
-const HELLO_DIR_ATTR: FileAttr = FileAttr {
-    ino: 1,
-    size: 0,
-    blocks: 0,
-    atime: UNIX_EPOCH,                                  // 1970-01-01 00:00:00
-    mtime: UNIX_EPOCH,
-    ctime: UNIX_EPOCH,
-    crtime: UNIX_EPOCH,
-    kind: FileType::Directory,
-    perm: 0o755,
-    nlink: 2,
-    uid: 501,
-    gid: 20,
-    rdev: 0,
-    flags: 0,
-};
-
-const HELLO_TXT_CONTENT: &str = "Hello World!\n";
-
-const HELLO_TXT_ATTR: FileAttr = FileAttr {
-    ino: 2,
-    size: 13,
-    blocks: 1,
-    atime: UNIX_EPOCH,                                  // 1970-01-01 00:00:00
-    mtime: UNIX_EPOCH,
-    ctime: UNIX_EPOCH,
-    crtime: UNIX_EPOCH,
-    kind: FileType::RegularFile,
-    perm: 0o644,
-    nlink: 1,
-    uid: 501,
-    gid: 20,
-    rdev: 0,
-    flags: 0,
-};
 
 pub struct DuffFS<'a> {
     fs: tfs::FileSystem<'a>
@@ -253,7 +218,7 @@ impl<'a> DuffFS<'a> {
     pub fn mount(self) {
         // env_logger::init();
         // let mountpoint = env::args_os().nth(1).unwrap();
-        let mountpoint = "data/duffFS2";
+        let mountpoint = "data/duffFS3";
         let options = ["-o", "rw", "-o", "fsname=DuffFS", "-o", "volname=DuffFS"]
             .iter()
             .map(|o| o.as_ref())
@@ -404,11 +369,6 @@ impl Filesystem for DuffFS<'_> {
     }
 
     fn read(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, size: u32, reply: ReplyData) {
-        // if ino == 2 {
-        //     reply.data(&HELLO_TXT_CONTENT.as_bytes()[offset as usize..]);
-        // } else {
-        //     reply.error(ENOENT);
-        // }
         if ino > 0 {
             // println!("READ => byte_offset: {}, length: {}", offset, size);
             let mut d: Vec<u8> = vec![0; size as usize];
@@ -440,18 +400,6 @@ impl Filesystem for DuffFS<'_> {
     }
 
     fn readdir(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, mut reply: ReplyDirectory) {
-        // if ino == 0 {
-        //     reply.error(ENOENT);
-        //     return;
-        // }
-
-        // let entries = vec![
-        //     (1, FileType::Directory, "."),
-        //     (1, FileType::Directory, ".."),
-        //     (2, FileType::RegularFile, "hello.txt"),
-        //     (3, FileType::RegularFile, "video.mp4"),
-        //     (4, FileType::RegularFile, "audio.mp3"),
-        // ];
         let entries = self.dir_entries(ino);
         println!("Directory Entries: {}, {:?}, offset: {}", ino, entries, offset);
         for (i, entry) in entries.into_iter().enumerate().skip(offset as usize) {
