@@ -63,13 +63,17 @@ impl<'a> InodeList<'a> {
                 // self.fs_meta_data.superblock.inodes += 1;
                 self.set_inode(inumber, inode);
                 self.save_inode(inumber);
+                println!("INUMBER I: {}", inumber);
                 inumber as i64
             }
         } else {
             let mut meta_data = &mut self.fs_meta_data;
             // read the head of the free_list
-            let n = (meta_data.superblock.free_inodes - 1) as usize;
+            let n = meta_data.superblock.free_inodes as usize;
             let mut i = n % (POINTERS_PER_BLOCK - 1);
+
+            // println!("InodeList ADd: {}, {}, {:?}", i, n, meta_data.inodes_free_list.pointers());
+            println!("InodeList ADd: {}, {}", i, n);
 
             if i == POINTERS_PER_BLOCK - 2 && 
                 meta_data.inodes_free_list.pointers_as_mut()[0] == 0 &&
@@ -86,12 +90,13 @@ impl<'a> InodeList<'a> {
             }
 
             let mut free_inum = 0;
-            free_inum = meta_data.inodes_free_list.pointers_as_mut()[i];
-            meta_data.inodes_free_list.pointers_as_mut()[i] = 0;
-            meta_data.superblock.free_inodes = meta_data.superblock.free_inodes - 1;
+            free_inum = meta_data.inodes_free_list.pointers_as_mut()[i-1];
+            meta_data.inodes_free_list.pointers_as_mut()[i-1] = 0;
+            meta_data.superblock.free_inodes -= 1;
 
             self.set_inode(free_inum as usize, Inode::blank());
             self.save_inode(free_inum as usize);
+            println!("INUMBER II: {}", free_inum);
             return free_inum as i64;
         }
     }
@@ -106,13 +111,12 @@ impl<'a> InodeList<'a> {
             // free data blocks
             (*block_manager).free_blocks(inode.deallocate_ptrs());
 
-
             let mut i = 0;
             loop {
                 if i == POINTERS_PER_BLOCK {
                     break
                 }
-                if (*this).fs_meta_data.root_free_list.pointers_as_mut()[i] == 0 {
+                if (*this).fs_meta_data.inodes_free_list.pointers_as_mut()[i] == 0 {
                     break
                 }
                 i += 1;

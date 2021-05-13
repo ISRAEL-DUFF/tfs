@@ -67,7 +67,7 @@ impl Directory {
         // let limit = Bounded(20);
         let encoded: Vec<u8> = bincode::serialize(self).unwrap();
         let encoded2: Vec<u8> = bincode::serialize(self).unwrap();
-        println!("serialized - CHECK: {:?}", Directory::deserialize(encoded2));
+        // println!("serialized - CHECK: {:?}", Directory::deserialize(encoded2));
         encoded
     }
 
@@ -156,13 +156,13 @@ impl<'a> DuffFS<'a> {
         // println!("Content Len: {}", content.len());
         let directory = Directory::deserialize(content);
 
-        println!("Dir from: {}, {:?}", inumber, directory);
+        // println!("Dir from: {}, {:?}", inumber, directory);
         directory
     }
 
     pub fn dir_entries(&mut self, inumber: u64) -> Vec<(u64, FileType, String)> {
         let directory = self.dir_from(inumber as u32);
-        println!("Entries from dir {}, {:?}", inumber, directory);
+        // println!("Entries from dir {}, {:?}", inumber, directory);
         let mut entries: Vec<(u64, FileType, String)> = Vec::new();
         for (path, inum) in directory.entries {
             if self.fs.get_inode(inum as usize).is_dir() {
@@ -174,7 +174,6 @@ impl<'a> DuffFS<'a> {
                     (inum as u64, FileType::RegularFile, path.into_string().unwrap())
                 );
             }
-            // println!("{:?}: \"{}\"", path, inumber);
         }
         entries
     }
@@ -206,7 +205,7 @@ impl<'a> DuffFS<'a> {
         unsafe {
             let inumber = (*fs).create_from(inode);
             dir.add_entry(Path::new(&name.to_str().unwrap()), inumber as u32);
-            println!("Added Entry to Directory: {}, {:?}", parent, dir);
+            // println!("Added Entry to Directory: {}, {:?}", parent, dir);
             self.save_dir(dir, parent as usize);
             if kind == FileType::Directory {
                 self.save_dir(Directory::new(inumber as u32, parent as u32), inumber as usize)
@@ -218,7 +217,7 @@ impl<'a> DuffFS<'a> {
     pub fn mount(self) {
         // env_logger::init();
         // let mountpoint = env::args_os().nth(1).unwrap();
-        let mountpoint = "data/duffFS3";
+        let mountpoint = "data/tdd";
         let options = ["-o", "rw", "-o", "fsname=DuffFS", "-o", "volname=DuffFS"]
             .iter()
             .map(|o| o.as_ref())
@@ -247,7 +246,7 @@ impl Filesystem for DuffFS<'_> {
         match dir.find_by_path(name) {   // TODO: check if parent exist
             Ok(inum) => {
                 let attr = self.get_attr(inum as usize);
-                println!("Look Up: {:?}", name);
+                // println!("Look Up: {:?}", name);
                 reply.entry(&TTL, &attr, 0);
             },
             Err(e) => {
@@ -401,7 +400,7 @@ impl Filesystem for DuffFS<'_> {
 
     fn readdir(&mut self, _req: &Request, ino: u64, _fh: u64, offset: i64, mut reply: ReplyDirectory) {
         let entries = self.dir_entries(ino);
-        println!("Directory Entries: {}, {:?}, offset: {}", ino, entries, offset);
+        // println!("Directory Entries: {}, {:?}, offset: {}", ino, entries, offset);
         for (i, entry) in entries.into_iter().enumerate().skip(offset as usize) {
             // i + 1 means the index of the next entry
             reply.add(entry.0, (i + 1) as i64, entry.1, entry.2);
@@ -418,7 +417,7 @@ impl Filesystem for DuffFS<'_> {
     // }
 
     fn statfs(&mut self, _req: &Request<'_>, ino: u64, reply: ReplyStatfs) {
-        println!("StatFS: {}", ino);
+        // println!("StatFS: {}", ino);
         match self.fs.meta_data {
             Some(meta_data) => {
                 let bavail = meta_data.superblock.blocks - meta_data.superblock.current_block_index;

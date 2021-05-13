@@ -13,6 +13,7 @@ pub fn get_index(inumber: usize) -> (usize, usize) {
     if inumber < 1 {
         panic!("Invalid index: {}", inumber);
     }
+    // println!("INUMBER: {}", inumber);
     let inumber = inumber - 1;
     let inode_block_index = (inumber as f64 / (INODES_PER_BLOCK - 1) as f64).floor() as usize;
     let inode_index = inumber % (INODES_PER_BLOCK - 1);

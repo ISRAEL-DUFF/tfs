@@ -93,9 +93,6 @@ impl<'c> InodeProxy<'c> {
         disk: Disk<'c>, 
         inumber: usize
     ) -> Self {
-        if inumber < 1 && inumber >= fs_meta_data.superblock.inodes as usize {
-            panic!("Invalid Inumber: {}", inumber);
-        }
         InodeProxy {
             inumber: inumber,
             data_manager: None,
@@ -106,9 +103,6 @@ impl<'c> InodeProxy<'c> {
     }
 
     fn get_index(&self) -> (usize, usize) {
-        // let inode_block_index = (self.inumber as f64 / (INODES_PER_BLOCK - 1) as f64).floor() as usize;
-        // let inode_index = self.inumber % (INODES_PER_BLOCK - 1);
-        // (inode_block_index, inode_index)
         get_index(self.inumber)
     }
 
